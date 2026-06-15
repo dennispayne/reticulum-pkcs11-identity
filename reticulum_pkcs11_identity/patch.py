@@ -186,9 +186,9 @@ def apply_patch() -> bool:
 
     pin = _resolve_pin(cfg)
 
+    backend = None
     try:
         import RNS
-        from .backend import PKCS11Backend
         from .identity import make_hardware_identity_class
 
         backend = PKCS11Backend(
