@@ -1,0 +1,13 @@
+README.md
+pyproject.toml
+reticulum_pkcs11_identity/__init__.py
+reticulum_pkcs11_identity/backend.py
+reticulum_pkcs11_identity/exceptions.py
+reticulum_pkcs11_identity/identity.py
+reticulum_pkcs11_identity/patch.py
+reticulum_pkcs11_identity.egg-info/PKG-INFO
+reticulum_pkcs11_identity.egg-info/SOURCES.txt
+reticulum_pkcs11_identity.egg-info/dependency_links.txt
+reticulum_pkcs11_identity.egg-info/requires.txt
+reticulum_pkcs11_identity.egg-info/top_level.txt
+tests/test_softtoken.py

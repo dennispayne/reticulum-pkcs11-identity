@@ -1,0 +1,5 @@
+rns>=0.7.0
+python-pkcs11>=0.7.0
+
+[test]
+pytest>=7.0

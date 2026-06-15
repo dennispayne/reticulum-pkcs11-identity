@@ -1,3 +1,27 @@
+Metadata-Version: 2.4
+Name: reticulum-pkcs11-identity
+Version: 0.1.0
+Summary: PKCS#11-backed identity support for Reticulum
+License: MIT with non-harm clause (see LICENSE)
+Project-URL: Homepage, https://github.com/dennispayne/reticulum-pkcs11-identity
+Project-URL: Issues, https://github.com/dennispayne/reticulum-pkcs11-identity/issues
+Keywords: reticulum,pkcs11,identity,hardware,hsm,security
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: Topic :: Security :: Cryptography
+Classifier: Topic :: System :: Networking
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: rns>=0.7.0
+Requires-Dist: python-pkcs11>=0.7.0
+Provides-Extra: test
+Requires-Dist: pytest>=7.0; extra == "test"
+
 # reticulum-pkcs11-identity
 
 PKCS#11-backed identity support for [Reticulum](https://reticulum.network/).

@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reticulum-pkcs11-identity"
+version = "0.1.0"
+description = "PKCS#11-backed identity support for Reticulum"
+readme = "README.md"
+license = { text = "MIT with non-harm clause (see LICENSE)" }
+requires-python = ">=3.10"
+keywords = ["reticulum", "pkcs11", "identity", "hardware", "hsm", "security"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Security :: Cryptography",
+    "Topic :: System :: Networking",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "rns>=0.7.0",
+    "python-pkcs11>=0.7.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/dennispayne/reticulum-pkcs11-identity"
+Issues = "https://github.com/dennispayne/reticulum-pkcs11-identity/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["reticulum_pkcs11_identity*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"
