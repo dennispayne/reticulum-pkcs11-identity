@@ -413,9 +413,6 @@ class PKCS11Backend:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _get_token(self):
-        return self._get_token_for_session()
-
     def _get_token_for_session(self, token_selection_callback=None):
         candidates = self._find_token_candidates()
         if len(candidates) == 0:

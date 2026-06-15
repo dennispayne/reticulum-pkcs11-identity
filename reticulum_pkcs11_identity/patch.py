@@ -66,6 +66,7 @@ import os
 from .exceptions import PKCS11KeyNotFoundError, PKCS11BackendError
 
 _PATCH_APPLIED = False
+_REQUIRED_CONFIG_KEYS = ("module", "token_label", "sign_key_label", "enc_key_label")
 
 
 def _find_config_path() -> str | None:
@@ -173,7 +174,7 @@ def apply_patch() -> bool:
         return False
 
     # Validate required keys.
-    for key in ("module", "token_label", "sign_key_label", "enc_key_label"):
+    for key in _REQUIRED_CONFIG_KEYS:
         if not cfg.get(key):
             import warnings
             warnings.warn(
