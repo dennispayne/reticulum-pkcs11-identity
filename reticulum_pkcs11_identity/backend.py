@@ -168,14 +168,14 @@ class PKCS11Backend:
             if self._session is not None:
                 return
 
-            effective_pin = self._resolve_pin(pin, pin_callback, prompt)
-            self._pin = pin
-            self._pin_callback = pin_callback
-            self._prompt = prompt
             try:
-                token = self._get_token(token_selection_callback=token_selection_callback)
+                token = self._get_token_for_session(token_selection_callback=token_selection_callback)
                 fingerprint = self._token_fingerprint(token)
                 self._bind_or_validate_token_binding(fingerprint, force_rebind=force_rebind)
+                effective_pin = self._resolve_pin(pin, pin_callback, prompt)
+                self._pin = effective_pin
+                self._pin_callback = pin_callback
+                self._prompt = prompt
                 self._session = token.open(rw=True, user_pin=effective_pin)
                 self._state = SessionLifecycle.ACTIVE_SESSION
             except pkcs11.exceptions.PinIncorrect as exc:

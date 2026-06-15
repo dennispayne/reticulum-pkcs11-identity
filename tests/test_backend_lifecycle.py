@@ -23,6 +23,12 @@ class _FakeToken:
         self.label = label
         self.serial = serial
         self.slot = type("SlotRef", (), {"slot_id": slot_id})()
+        self.last_open_pin = None
+        self._open_result = object()
+
+    def open(self, rw=True, user_pin=None):
+        self.last_open_pin = user_pin
+        return self._open_result
 
 
 class _FakeSlot:
@@ -117,3 +123,37 @@ def test_multiple_candidates_use_callback_selection():
 
     assert selected.serial == "S2"
 
+
+def test_open_session_skips_pin_resolution_when_token_absent():
+    backend = _make_backend()
+    backend._session = None
+    backend._state = SessionLifecycle.NO_SESSION
+    backend._lib = _FakeLib([])
+
+    pin_resolved = {"called": False}
+
+    def _fake_resolve_pin(*_args, **_kwargs):
+        pin_resolved["called"] = True
+        return "1234"
+
+    backend._resolve_pin = _fake_resolve_pin
+
+    with pytest.raises(PKCS11SessionError, match="Failed to open PKCS#11 session"):
+        backend.open_session()
+
+    assert pin_resolved["called"] is False
+
+
+def test_open_session_caches_resolved_pin_for_recovery():
+    backend = _make_backend()
+    backend._session = None
+    backend._state = SessionLifecycle.NO_SESSION
+
+    token = _FakeToken("Match", "SERIAL-1", 1)
+    backend._lib = _FakeLib([_FakeSlot(1, token)])
+
+    backend.open_session(pin_callback=lambda: "2468")
+
+    assert backend._pin == "2468"
+    assert token.last_open_pin == "2468"
+    assert backend.lifecycle_state == SessionLifecycle.ACTIVE_SESSION
