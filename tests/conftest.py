@@ -96,7 +96,10 @@ def softhsm2_module_path():
     """Path to libsofthsm2.so, or skip the test if SoftHSM2 is not installed."""
     path = _find_softhsm_module()
     if path is None:
-        pytest.skip("SoftHSM2 is not installed; skipping PKCS#11 tests")
+        pytest.skip(
+            "SoftHSM2 is not installed; run scripts/install_test_deps.sh "
+            "or install SoftHSM2 manually to run PKCS#11 tests"
+        )
     return path
 
 

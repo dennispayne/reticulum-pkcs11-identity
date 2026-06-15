@@ -238,22 +238,26 @@ assert pt == b"secret"
 
 ## Running the tests
 
-SoftHSM2 must be installed.  The test suite initialises its own temporary token
-and generates the required key pairs automatically.
+The test suite can auto-provision SoftHSM2 on Linux runners and agent sessions.
+It initialises its own temporary token and generates the required key pairs
+automatically.
 
 ```bash
+# Install system-level test dependency (SoftHSM2)
+bash scripts/install_test_deps.sh
+
 # Install test dependencies
 pip install -e ".[test]"
 
 # Run all tests
-pytest tests/ -v
+python3 -m pytest tests/ -v
 
 # Run a specific test class
-pytest tests/test_softtoken.py::TestBackendECDH -v
+python3 -m pytest tests/test_softtoken.py::TestBackendECDH -v
 ```
 
-If SoftHSM2 is not installed, all PKCS#11 tests are automatically skipped with
-a clear message.
+If SoftHSM2 cannot be installed in your environment, PKCS#11 tests are
+automatically skipped with a clear message.
 
 ---
 

@@ -326,6 +326,8 @@ class PKCS11Backend:
                 return _ec_point_to_raw(bytes(ec_point))
             try:
                 return self._execute_with_recovery(_do_read_pub)
+            except PKCS11KeyNotFoundError:
+                raise
             except PKCS11BackendError:
                 raise
             except Exception as exc:
