@@ -94,10 +94,16 @@ def _softhsm2_util(*args, env=None) -> subprocess.CompletedProcess:
 @pytest.fixture(scope="session")
 def softhsm2_module_path():
     """Path to libsofthsm2.so, or skip the test if SoftHSM2 is not installed."""
+    if shutil.which("softhsm2-util") is None:
+        pytest.skip(
+            "SoftHSM2 is not installed (missing softhsm2-util); run scripts/install_test_deps.sh "
+            "or install SoftHSM2 manually to run PKCS#11 tests"
+        )
+
     path = _find_softhsm_module()
     if path is None:
         pytest.skip(
-            "SoftHSM2 is not installed; run scripts/install_test_deps.sh "
+            "SoftHSM2 is not installed (missing libsofthsm2.so); run scripts/install_test_deps.sh "
             "or install SoftHSM2 manually to run PKCS#11 tests"
         )
     return path
