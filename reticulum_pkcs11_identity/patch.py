@@ -241,6 +241,8 @@ def apply_patch() -> bool:
         return True
 
     except (PKCS11BackendError, PKCS11KeyNotFoundError) as exc:
+        if backend is not None:
+            backend.close()
         import warnings
         warnings.warn(
             "[reticulum_pkcs11_identity] PKCS#11 key bootstrap failed: "
@@ -249,6 +251,8 @@ def apply_patch() -> bool:
         )
         return False
     except Exception as exc:
+        if backend is not None:
+            backend.close()
         import warnings
         warnings.warn(
             f"[reticulum_pkcs11_identity] Failed to apply PKCS#11 patch: {exc}",
