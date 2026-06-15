@@ -50,7 +50,7 @@ Quick start::
 See the README for full configuration instructions.
 """
 
-from .backend import PKCS11Backend
+from .backend import PKCS11Backend, SessionLifecycle
 from .exceptions import (
     PKCS11BackendError,
     PKCS11ConfigError,
@@ -64,6 +64,7 @@ from .patch import apply_patch
 
 __all__ = [
     "PKCS11Backend",
+    "SessionLifecycle",
     "PKCS11BackendError",
     "PKCS11ConfigError",
     "PKCS11IdentityError",

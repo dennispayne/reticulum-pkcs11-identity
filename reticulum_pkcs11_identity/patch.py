@@ -63,6 +63,8 @@ The patch is applied once when this module is imported.  Re-importing is safe.
 
 import os
 
+from .exceptions import PKCS11KeyNotFoundError, PKCS11BackendError
+
 _PATCH_APPLIED = False
 
 
@@ -127,6 +129,31 @@ def _resolve_pin(cfg: dict) -> str | None:
     return pin_from_env  # may be None → interactive prompt
 
 
+def _ensure_identity_keys(backend, cfg: dict) -> list[str]:
+    """
+    Ensure required identity keys exist on the selected token.
+
+    Returns a list of key labels that were created.
+    """
+    created = []
+    sign_label = cfg["sign_key_label"]
+    enc_label = cfg["enc_key_label"]
+
+    try:
+        backend.get_public_key_bytes(key_label=sign_label)
+    except PKCS11KeyNotFoundError:
+        backend.generate_ed25519_keypair(label=sign_label)
+        created.append(sign_label)
+
+    try:
+        backend.get_public_key_bytes(key_label=enc_label)
+    except PKCS11KeyNotFoundError:
+        backend.generate_x25519_keypair(label=enc_label)
+        created.append(enc_label)
+
+    return created
+
+
 def apply_patch() -> bool:
     """
     Apply the PKCS#11 monkey-patch if the Reticulum configuration requests it.
@@ -171,6 +198,7 @@ def apply_patch() -> bool:
             pin=pin,
             prompt=f"PIN for PKCS#11 token '{cfg['token_label']}': ",
         )
+        created_keys = _ensure_identity_keys(backend, cfg)
 
         HardwareIdentity = make_hardware_identity_class(
             backend=backend,
@@ -199,11 +227,26 @@ def apply_patch() -> bool:
                 f"(token: {cfg['token_label']})",
                 RNS.LOG_VERBOSE,
             )
+            if created_keys:
+                created_str = ", ".join(created_keys)
+                RNS.log(
+                    "[reticulum_pkcs11_identity] Created missing PKCS#11 identity "
+                    f"keys: {created_str}",
+                    RNS.LOG_NOTICE,
+                )
         except Exception:
             pass
 
         return True
 
+    except (PKCS11BackendError, PKCS11KeyNotFoundError) as exc:
+        import warnings
+        warnings.warn(
+            "[reticulum_pkcs11_identity] PKCS#11 key bootstrap failed: "
+            f"{exc}",
+            stacklevel=3,
+        )
+        return False
     except Exception as exc:
         import warnings
         warnings.warn(

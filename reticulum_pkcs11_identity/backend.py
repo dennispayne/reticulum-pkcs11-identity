@@ -44,6 +44,7 @@ Design goals:
 
 import getpass
 import threading
+from enum import Enum
 
 import pkcs11
 from pkcs11 import KeyType, Mechanism, ObjectClass, Attribute
@@ -64,6 +65,13 @@ _X25519_PARAMS  = bytes([0x06, 0x03, 0x2B, 0x65, 0x6E])
 
 # DER EC_POINT prefix used by PKCS#11 for 32-byte curve keys: 04 20
 _EC_POINT_PREFIX = bytes([0x04, 0x20])
+
+
+class SessionLifecycle(str, Enum):
+    NO_SESSION = "no_session"
+    ACTIVE_SESSION = "active_session"
+    SESSION_LOST = "session_lost"
+    TOKEN_CHANGED = "token_changed"
 
 
 def _ec_point_to_raw(ec_point: bytes) -> bytes:
@@ -118,7 +126,16 @@ class PKCS11Backend:
         self._token_label = token_label
         self._slot_id = slot_id
         self._session: pkcs11.Session | None = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._state = SessionLifecycle.NO_SESSION
+        self._pin: str | None = None
+        self._pin_callback = None
+        self._prompt: str | None = None
+        self._bound_token_fingerprint: tuple[str, str, int] | None = None
+
+    @property
+    def lifecycle_state(self) -> SessionLifecycle:
+        return self._state
 
     # ------------------------------------------------------------------
     # Session management
@@ -129,6 +146,8 @@ class PKCS11Backend:
         pin: str | None = None,
         pin_callback=None,
         prompt: str | None = None,
+        token_selection_callback=None,
+        force_rebind: bool = False,
     ) -> None:
         """
         Open a read-write PKCS#11 session and authenticate with the user PIN.
@@ -150,16 +169,27 @@ class PKCS11Backend:
                 return
 
             effective_pin = self._resolve_pin(pin, pin_callback, prompt)
+            self._pin = pin
+            self._pin_callback = pin_callback
+            self._prompt = prompt
             try:
-                token = self._get_token()
+                token = self._get_token(token_selection_callback=token_selection_callback)
+                fingerprint = self._token_fingerprint(token)
+                self._bind_or_validate_token_binding(fingerprint, force_rebind=force_rebind)
                 self._session = token.open(rw=True, user_pin=effective_pin)
+                self._state = SessionLifecycle.ACTIVE_SESSION
             except pkcs11.exceptions.PinIncorrect as exc:
                 raise PKCS11LoginError("Incorrect PIN") from exc
             except pkcs11.exceptions.PinLocked as exc:
                 raise PKCS11LoginError("PIN is locked; token may need to be reset") from exc
             except pkcs11.exceptions.TokenNotPresent as exc:
-                raise PKCS11SessionError("Token is not present") from exc
+                self._state = SessionLifecycle.SESSION_LOST
+                raise PKCS11SessionError("PKCS#11 token is not present") from exc
+            except pkcs11.exceptions.MultipleTokensReturned:
+                self._state = SessionLifecycle.NO_SESSION
+                raise PKCS11SessionError("Multiple matching PKCS#11 tokens found and no selection was made")
             except Exception as exc:
+                self._state = SessionLifecycle.NO_SESSION
                 raise PKCS11SessionError(f"Failed to open PKCS#11 session: {exc}") from exc
 
     def close(self) -> None:
@@ -171,6 +201,7 @@ class PKCS11Backend:
                 except Exception:
                     pass
                 self._session = None
+            self._state = SessionLifecycle.NO_SESSION
 
     # ------------------------------------------------------------------
     # Cryptographic operations
@@ -194,16 +225,17 @@ class PKCS11Backend:
         :raises PKCS11BackendError: on other PKCS#11 errors.
         """
         with self._lock:
-            session = self._require_session()
-            prv = self._find_key(
-                session,
-                ObjectClass.PRIVATE_KEY,
-                KeyType.EC_EDWARDS,
-                key_label=key_label,
-                key_id=key_id,
-            )
-            try:
+            def _do_sign(session):
+                prv = self._find_key(
+                    session,
+                    ObjectClass.PRIVATE_KEY,
+                    KeyType.EC_EDWARDS,
+                    key_label=key_label,
+                    key_id=key_id,
+                )
                 return bytes(prv.sign(data, mechanism=Mechanism.EDDSA))
+            try:
+                return self._execute_with_recovery(_do_sign)
             except Exception as exc:
                 raise PKCS11BackendError(f"Signing failed: {exc}") from exc
 
@@ -240,15 +272,14 @@ class PKCS11Backend:
             )
 
         with self._lock:
-            session = self._require_session()
-            prv = self._find_key(
-                session,
-                ObjectClass.PRIVATE_KEY,
-                KeyType.EC_EDWARDS,
-                key_label=key_label,
-                key_id=key_id,
-            )
-            try:
+            def _do_derive(session):
+                prv = self._find_key(
+                    session,
+                    ObjectClass.PRIVATE_KEY,
+                    KeyType.EC_EDWARDS,
+                    key_label=key_label,
+                    key_id=key_id,
+                )
                 derived = prv.derive_key(
                     KeyType.GENERIC_SECRET,
                     32 * 8,
@@ -261,6 +292,8 @@ class PKCS11Backend:
                     },
                 )
                 return bytes(derived[Attribute.VALUE])
+            try:
+                return self._execute_with_recovery(_do_derive)
             except Exception as exc:
                 raise PKCS11BackendError(f"ECDH derivation failed: {exc}") from exc
 
@@ -281,17 +314,18 @@ class PKCS11Backend:
         :raises PKCS11KeyNotFoundError: if the key is not found.
         """
         with self._lock:
-            session = self._require_session()
-            pub = self._find_key(
-                session,
-                ObjectClass.PUBLIC_KEY,
-                key_type,
-                key_label=key_label,
-                key_id=key_id,
-            )
-            try:
+            def _do_read_pub(session):
+                pub = self._find_key(
+                    session,
+                    ObjectClass.PUBLIC_KEY,
+                    key_type,
+                    key_label=key_label,
+                    key_id=key_id,
+                )
                 ec_point = pub[Attribute.EC_POINT]
                 return _ec_point_to_raw(bytes(ec_point))
+            try:
+                return self._execute_with_recovery(_do_read_pub)
             except PKCS11BackendError:
                 raise
             except Exception as exc:
@@ -380,13 +414,98 @@ class PKCS11Backend:
     # ------------------------------------------------------------------
 
     def _get_token(self):
-        if self._token_label:
-            return self._lib.get_token(token_label=self._token_label)
-        # Fall back to slot_id lookup
-        for slot in self._lib.get_slots(token_present=True):
-            if slot.slot_id == self._slot_id:
-                return slot.get_token()
-        raise PKCS11SessionError(f"No token found in slot {self._slot_id}")
+        return self._get_token_for_session()
+
+    def _get_token_for_session(self, token_selection_callback=None):
+        candidates = self._find_token_candidates()
+        if len(candidates) == 0:
+            self._state = SessionLifecycle.SESSION_LOST
+            if self._token_label:
+                raise PKCS11SessionError(
+                    f"PKCS#11 token '{self._token_label}' is not present"
+                )
+            raise PKCS11SessionError("No suitable PKCS#11 token is present")
+
+        if self._bound_token_fingerprint is not None:
+            for _, token in candidates:
+                if self._token_fingerprint(token) == self._bound_token_fingerprint:
+                    return token
+            self._state = SessionLifecycle.TOKEN_CHANGED
+            raise PKCS11SessionError(
+                "A different PKCS#11 token is now present for this runtime. "
+                "Refusing automatic switch; rebind explicitly to continue."
+            )
+
+        if len(candidates) == 1:
+            return candidates[0][1]
+        return self._choose_token_candidate(candidates, token_selection_callback)
+
+    def _find_token_candidates(self):
+        candidates = []
+        try:
+            slots = list(self._lib.get_slots(token_present=True))
+        except Exception as exc:
+            raise PKCS11SessionError(f"Could not enumerate PKCS#11 slots: {exc}") from exc
+        for slot in slots:
+            if self._slot_id is not None and slot.slot_id != self._slot_id:
+                continue
+            try:
+                token = slot.get_token()
+            except pkcs11.exceptions.TokenNotPresent:
+                continue
+            except Exception:
+                continue
+            if self._token_label is not None:
+                token_label = (getattr(token, "label", "") or "").strip()
+                if token_label != self._token_label:
+                    continue
+            candidates.append((slot.slot_id, token))
+        candidates.sort(key=lambda item: item[0])
+        return candidates
+
+    def _choose_token_candidate(self, candidates, token_selection_callback=None):
+        if token_selection_callback is not None:
+            selected_index = token_selection_callback(candidates)
+            if 0 <= selected_index < len(candidates):
+                return candidates[selected_index][1]
+            raise PKCS11SessionError("Invalid PKCS#11 token selection callback result")
+
+        print("Multiple matching PKCS#11 tokens are available:")
+        for idx, (slot_id, token) in enumerate(candidates, start=1):
+            print(
+                f"  [{idx}] slot={slot_id} "
+                f"label={getattr(token, 'label', '<unknown>')} "
+                f"serial={getattr(token, 'serial', '<unknown>')}"
+            )
+        while True:
+            selection = input("Select PKCS#11 token number: ").strip()
+            if selection.isdigit():
+                index = int(selection) - 1
+                if 0 <= index < len(candidates):
+                    return candidates[index][1]
+            print("Invalid selection. Please enter a valid token number.")
+
+    @staticmethod
+    def _token_fingerprint(token) -> tuple[str, str, int]:
+        label = (getattr(token, "label", "") or "").strip()
+        serial = (getattr(token, "serial", "") or "").strip()
+        slot = int(getattr(token.slot, "slot_id", -1))
+        return (label, serial, slot)
+
+    def _bind_or_validate_token_binding(
+        self,
+        fingerprint: tuple[str, str, int],
+        *,
+        force_rebind: bool = False,
+    ) -> None:
+        if self._bound_token_fingerprint is None or force_rebind:
+            self._bound_token_fingerprint = fingerprint
+            return
+        if self._bound_token_fingerprint != fingerprint:
+            self._state = SessionLifecycle.TOKEN_CHANGED
+            raise PKCS11SessionError(
+                "Inserted PKCS#11 token does not match the runtime-bound token"
+            )
 
     def _require_session(self) -> pkcs11.Session:
         """Return the current session, raising if it is not open."""
@@ -395,6 +514,64 @@ class PKCS11Backend:
                 "PKCS#11 session is not open; call open_session() first"
             )
         return self._session
+
+    def _is_session_failure(self, exc: Exception) -> bool:
+        return isinstance(
+            exc,
+            (
+                pkcs11.exceptions.TokenNotPresent,
+                pkcs11.exceptions.DeviceRemoved,
+                pkcs11.exceptions.SessionClosed,
+                pkcs11.exceptions.SessionHandleInvalid,
+                PKCS11SessionError,
+            ),
+        )
+
+    def _mark_session_lost(self, exc: Exception | None = None) -> None:
+        self._state = SessionLifecycle.SESSION_LOST
+        if self._session is not None:
+            try:
+                self._session.close()
+            except Exception:
+                pass
+            self._session = None
+
+    def _reopen_session(self) -> None:
+        self.open_session(
+            pin=self._pin,
+            pin_callback=self._pin_callback,
+            prompt=self._prompt,
+        )
+
+    def rebind_to_current_token(
+        self,
+        *,
+        pin: str | None = None,
+        pin_callback=None,
+        prompt: str | None = None,
+        token_selection_callback=None,
+    ) -> None:
+        with self._lock:
+            self.close()
+            self.open_session(
+                pin=pin if pin is not None else self._pin,
+                pin_callback=pin_callback if pin_callback is not None else self._pin_callback,
+                prompt=prompt if prompt is not None else self._prompt,
+                token_selection_callback=token_selection_callback,
+                force_rebind=True,
+            )
+
+    def _execute_with_recovery(self, operation):
+        session = self._require_session()
+        try:
+            return operation(session)
+        except Exception as exc:
+            if not self._is_session_failure(exc):
+                raise
+            self._mark_session_lost(exc)
+            self._reopen_session()
+            session = self._require_session()
+            return operation(session)
 
     def _find_key(
         self,
