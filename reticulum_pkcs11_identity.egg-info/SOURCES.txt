@@ -10,4 +10,6 @@ reticulum_pkcs11_identity.egg-info/SOURCES.txt
 reticulum_pkcs11_identity.egg-info/dependency_links.txt
 reticulum_pkcs11_identity.egg-info/requires.txt
 reticulum_pkcs11_identity.egg-info/top_level.txt
+tests/test_backend_lifecycle.py
+tests/test_patch_bootstrap.py
 tests/test_softtoken.py

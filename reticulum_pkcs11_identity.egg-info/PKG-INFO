@@ -156,6 +156,9 @@ Add the following to your Reticulum configuration file
   # If neither is set, you are prompted interactively at startup.
 ```
 
+If the configured `sign_key_label` / `enc_key_label` keys do not exist, they are
+created automatically on the selected token during startup.
+
 Set the `RETICULUM_PKCS11_PIN` environment variable to avoid interactive
 prompts in automated deployments:
 
@@ -180,18 +183,26 @@ behaviour remain identical.
 
 ## PIN and session behaviour
 
-The module requests the PIN **exactly once per application run**, at the time
-the PKCS#11 session is opened (typically at import time when the patch is
-applied).
+The module opens one authenticated PKCS#11 session and tracks its lifecycle:
 
-- A single `C_Login` call is made when `open_session()` is invoked.
-- The same authenticated session is reused for every subsequent `C_Sign` and
-  `C_DeriveKey` operation.
-- The PIN is **never** prompted again during normal operation.
+- `no_session` — backend initial state before login.
+- `active_session` — session is open and usable.
+- `session_lost` — token/session disappeared and needs re-open.
+- `token_changed` — a different token appeared than the one originally bound.
+
+- A single `C_Login` call is made for each session open/re-open.
+- The same authenticated session is reused for all `C_Sign` and `C_DeriveKey`
+  operations while active.
+- On token removal or session-loss errors, operations trigger a controlled
+  re-open flow instead of failing with opaque PKCS#11 errors.
+- If PIN was interactive, recovery re-prompts for PIN; if PIN came from config
+  or env, recovery reuses that source.
+- If multiple matching tokens are available, a deterministic token list is
+  shown and the operator must select one.
+- The runtime stays bound 1:1 to the originally selected token. If another
+  token appears, automatic switching is refused and a clear error is raised.
 - The backend serialises concurrent operations with an internal lock, so it is
   safe to use from multiple threads.
-- If the session is closed unexpectedly (e.g. the token is removed and
-  reinserted), calling `open_session()` again re-establishes it.
 
 This design is compatible with strongly-protected tokens, including:
 
