@@ -156,8 +156,8 @@ def make_hardware_identity_class(
                 )
             except PKCS11KeyNotFoundError as exc:
                 raise PKCS11KeyNotFoundError(
-                    f"Identity key not found on token — "
-                    f"run the token setup script to generate keys: {exc}"
+                    "Identity key not found on token — generate the required key pairs on the token (see README): "
+                    f"{exc}"
                 ) from exc
 
             self.pub_bytes     = enc_pub_raw
