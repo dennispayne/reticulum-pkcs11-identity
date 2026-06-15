@@ -195,8 +195,10 @@ The module opens one authenticated PKCS#11 session and tracks its lifecycle:
   operations while active.
 - On token removal or session-loss errors, operations trigger a controlled
   re-open flow instead of failing with opaque PKCS#11 errors.
-- If PIN was interactive, recovery re-prompts for PIN; if PIN came from config
-  or env, recovery reuses that source.
+- Recovery checks token presence before any PIN handling, so token removal does
+  not trigger blocking PIN prompts.
+- The resolved PIN is cached in-memory for the current runtime and reused for
+  automatic session recovery after reinsertion.
 - If multiple matching tokens are available, a deterministic token list is
   shown and the operator must select one.
 - The runtime stays bound 1:1 to the originally selected token. If another
