@@ -1,0 +1,22 @@
+*.egg-info/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+
+# Build artifacts
+build/
+dist/
+
+# Tooling caches and coverage
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Local VS Code environment overrides (can contain PINs/paths)
+.vscode/.env

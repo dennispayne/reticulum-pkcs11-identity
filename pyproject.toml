@@ -1,0 +1,77 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reticulum-pkcs11-identity"
+version = "0.1.0"
+description = "PKCS#11-backed LXMF user identity support for Reticulum"
+readme = "README.md"
+license = { text = "MIT with non-harm clause (see LICENSE)" }
+requires-python = ">=3.10"
+keywords = ["reticulum", "lxmf", "pkcs11", "identity", "hardware", "hsm", "security"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Security :: Cryptography",
+    "Topic :: System :: Networking",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "rns>=0.7.0",
+    "python-pkcs11>=0.7.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+# System dependencies for full test suite (not installable via pip):
+# - SoftHSM2: softhsm2-util and libsofthsm2.so (required for PKCS#11 tests)
+#   Install with: apt-get install softhsm2 (Linux)
+#                 choco install softhsm2 (Windows)
+#                 brew install softhsm (macOS)
+
+[project.urls]
+Homepage = "https://github.com/dennispayne/reticulum-pkcs11-identity"
+Issues = "https://github.com/dennispayne/reticulum-pkcs11-identity/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["reticulum_pkcs11_identity*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"
+markers = [
+    "backend: backend unit tests",
+    "identity: LXMF user identity unit tests",
+    "discovery: token discovery tests",
+    "lifecycle: backend lifecycle tests",
+    "lxmf: lxmf bootstrap/config tests",
+]
+
+[tool.coverage.run]
+source = ["reticulum_pkcs11_identity"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"

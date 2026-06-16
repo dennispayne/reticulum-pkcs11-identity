@@ -1,0 +1,171 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Python: Install editable test deps",
+      "type": "shell",
+      "command": "bash",
+      "linux": {
+        "command": "bash",
+        "args": [
+          "scripts/bootstrap_test_env.sh"
+        ]
+      },
+      "osx": {
+        "command": "bash",
+        "args": [
+          "scripts/bootstrap_test_env.sh"
+        ]
+      },
+      "windows": {
+        "command": "py",
+        "args": [
+          "-3",
+          "-m",
+          "pip",
+          "install",
+          "-e",
+          ".[test]"
+        ]
+      },
+      "args": [
+        "scripts/bootstrap_test_env.sh"
+      ],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Tests: Run all",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "linux": {
+        "command": "${workspaceFolder}/.venv/bin/python"
+      },
+      "osx": {
+        "command": "${workspaceFolder}/.venv/bin/python"
+      },
+      "windows": {
+        "command": "py",
+        "args": [
+          "-3",
+          "-m",
+          "pytest",
+          "tests",
+          "-v"
+        ]
+      },
+      "args": [
+        "-m",
+        "pytest",
+        "tests",
+        "-v"
+      ],
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Tests: Run current file",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "linux": {
+        "command": "${workspaceFolder}/.venv/bin/python"
+      },
+      "osx": {
+        "command": "${workspaceFolder}/.venv/bin/python"
+      },
+      "windows": {
+        "command": "py",
+        "args": [
+          "-3",
+          "-m",
+          "pytest",
+          "${file}",
+          "-v"
+        ]
+      },
+      "args": [
+        "-m",
+        "pytest",
+        "${file}",
+        "-v"
+      ],
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Tests: Run selected node",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "linux": {
+        "command": "${workspaceFolder}/.venv/bin/python"
+      },
+      "osx": {
+        "command": "${workspaceFolder}/.venv/bin/python"
+      },
+      "windows": {
+        "command": "py",
+        "args": [
+          "-3",
+          "-m",
+          "pytest",
+          "${input:pytestNodeId}",
+          "-v"
+        ]
+      },
+      "args": [
+        "-m",
+        "pytest",
+        "${input:pytestNodeId}",
+        "-v"
+      ],
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Tests: Run with coverage",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "linux": {
+        "command": "${workspaceFolder}/.venv/bin/python"
+      },
+      "osx": {
+        "command": "${workspaceFolder}/.venv/bin/python"
+      },
+      "windows": {
+        "command": "py",
+        "args": [
+          "-3",
+          "-m",
+          "pytest",
+          "tests",
+          "-v",
+          "--cov=reticulum_pkcs11_identity",
+          "--cov-report=html",
+          "--cov-report=term-missing"
+        ]
+      },
+      "args": [
+        "-m",
+        "pytest",
+        "tests",
+        "-v",
+        "--cov=reticulum_pkcs11_identity",
+        "--cov-report=html",
+        "--cov-report=term-missing"
+      ],
+      "group": "test",
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "pytestNodeId",
+      "type": "promptString",
+      "description": "Pytest node id (example: tests/test_softtoken.py::TestBackendECDH::test_ecdh_returns_32_bytes)",
+      "default": "tests/test_softtoken.py::TestBackendECDH"
+    }
+  ]
+}
