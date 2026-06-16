@@ -18,9 +18,8 @@
         ]
       },
       "windows": {
-        "command": "py",
+        "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
         "args": [
-          "-3",
           "-m",
           "pip",
           "install",
@@ -37,7 +36,7 @@
     {
       "label": "Tests: Run all",
       "type": "shell",
-      "command": "${workspaceFolder}/.venv/bin/python",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
       "linux": {
         "command": "${workspaceFolder}/.venv/bin/python"
       },
@@ -45,9 +44,8 @@
         "command": "${workspaceFolder}/.venv/bin/python"
       },
       "windows": {
-        "command": "py",
+        "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
         "args": [
-          "-3",
           "-m",
           "pytest",
           "tests",
@@ -69,7 +67,7 @@
     {
       "label": "Tests: Run current file",
       "type": "shell",
-      "command": "${workspaceFolder}/.venv/bin/python",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
       "linux": {
         "command": "${workspaceFolder}/.venv/bin/python"
       },
@@ -77,9 +75,8 @@
         "command": "${workspaceFolder}/.venv/bin/python"
       },
       "windows": {
-        "command": "py",
+        "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
         "args": [
-          "-3",
           "-m",
           "pytest",
           "${file}",
@@ -98,7 +95,7 @@
     {
       "label": "Tests: Run selected node",
       "type": "shell",
-      "command": "${workspaceFolder}/.venv/bin/python",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
       "linux": {
         "command": "${workspaceFolder}/.venv/bin/python"
       },
@@ -106,9 +103,8 @@
         "command": "${workspaceFolder}/.venv/bin/python"
       },
       "windows": {
-        "command": "py",
+        "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
         "args": [
-          "-3",
           "-m",
           "pytest",
           "${input:pytestNodeId}",
@@ -127,7 +123,7 @@
     {
       "label": "Tests: Run with coverage",
       "type": "shell",
-      "command": "${workspaceFolder}/.venv/bin/python",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
       "linux": {
         "command": "${workspaceFolder}/.venv/bin/python"
       },
@@ -135,9 +131,8 @@
         "command": "${workspaceFolder}/.venv/bin/python"
       },
       "windows": {
-        "command": "py",
+        "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
         "args": [
-          "-3",
           "-m",
           "pytest",
           "tests",
