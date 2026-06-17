@@ -23,7 +23,7 @@ except ImportError:
 
 from .app_identity import AppIdentityMapper, PIV_SLOTS, PIV_SLOT_NAMES
 from .config import load_hardware_identity_config
-from .discovery import enumerate_token_inventory
+from .discovery import enumerate_token_inventory, probe_piv_slots
 
 
 logger = logging.getLogger(__name__)
@@ -420,22 +420,33 @@ def list_tokens_command(args):
                 
                 print(f"  Slots: {len(slots)}")
                 
+                # First try to get token labels
+                found_token = False
                 for slot in slots:
                     try:
-                        token = slot.token
+                        token = slot.get_token()
                         label = (token.label if hasattr(token, 'label') else str(token)).strip()
                         serial = token.serial_number if hasattr(token, 'serial_number') else "unknown"
                         
                         if label:
-                            print(f"    [Slot {slot.slot_id}] {label}")
+                            print(f"    [Slot {slot.slot_id}] Token: {label}")
                             print(f"      Serial: {serial}")
                             print(f"      Use in config: token_label = {label}")
+                            found_token = True
                             found_any = True
                         else:
-                            print(f"    [Slot {slot.slot_id}] (empty slot)")
+                            print(f"    [Slot {slot.slot_id}] (token present but no label)")
                     except Exception as e:
-                        logger.debug(f"Error reading token: {e}")
-                        pass
+                        # TokenNotPresent is expected if keys exist but no identity created yet
+                        error_type = type(e).__name__
+                        if error_type == 'TokenNotPresent':
+                            print(f"    [Slot {slot.slot_id}] (YubiKey detected - ready for first identity)")
+                            print(f"      Note: This YubiKey hasn't been initialized with an identity yet")
+                            print(f"      Run a Reticulum app to create your first identity")
+                            found_any = True
+                        else:
+                            logger.debug(f"Error reading token: {e}")
+                            print(f"    [Slot {slot.slot_id}] (error: {error_type})")
                 
                 print()
             except Exception as e:
