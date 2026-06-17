@@ -2,7 +2,7 @@
 Configuration management for PKCS#11 hardware identities.
 
 Handles PIN, provider selection, token selection, and app-to-slot mapping.
-Config stored in ~/.config/reticulum/pkcs11_identity.conf
+Config stored in ~/.reticulum/config [hardware_identity] section
 """
 
 import configparser
@@ -22,7 +22,7 @@ def load_hardware_identity_config(reticulum_config_path: str | None = None) -> D
     
     Args:
         reticulum_config_path: Path to Reticulum config file.
-                              Defaults to ~/.config/reticulum/config
+                              Defaults to ~/.reticulum/config
     
     Returns:
         Config dict with keys:
@@ -35,7 +35,7 @@ def load_hardware_identity_config(reticulum_config_path: str | None = None) -> D
         }
     """
     if reticulum_config_path is None:
-        reticulum_config_path = os.path.expanduser("~/.config/reticulum/config")
+        reticulum_config_path = os.path.expanduser("~/.reticulum/config")
     
     config_path = Path(reticulum_config_path)
     config = {

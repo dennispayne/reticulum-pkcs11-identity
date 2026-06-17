@@ -61,10 +61,10 @@ When your app needs to sign a message or create an identity, this module interce
 
 1. Plug in your hardware token (YubiKey, smartcard, etc.)
 2. Locate your Reticulum config file:
-   - **Windows:** `C:\Users\YourUsername\.config\reticulum\config`
-   - **macOS/Linux:** `~/.config/reticulum/config`
+   - **Windows:** `C:\Users\YourUsername\.reticulum\config`
+   - **macOS/Linux:** `~/.reticulum/config`
    
-3. If the file or directory doesn't exist, create them. In a text editor, open the config file and add:
+3. Open the config file in a text editor and add this section (or update it if it exists):
    ```
    [hardware_identity]
    enabled = true
