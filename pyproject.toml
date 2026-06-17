@@ -50,10 +50,12 @@ testpaths = ["tests"]
 addopts = "-v"
 markers = [
     "backend: backend unit tests",
+    "backend_piv: PIV backend specific tests",
     "identity: LXMF user identity unit tests",
     "discovery: token discovery tests",
     "lifecycle: backend lifecycle tests",
     "lxmf: lxmf bootstrap/config tests",
+    "session_manager: session manager integration tests",
 ]
 
 [tool.coverage.run]
