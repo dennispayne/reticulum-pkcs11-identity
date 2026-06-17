@@ -4,11 +4,17 @@ App-to-PIV-slot mapper for multi-app identities.
 Implements first-come-first-served slot allocation with persistence.
 Each app gets its own (or shared) PIV slot, ensuring multiple apps
 can have independent hardware-backed identities on the same YubiKey.
+
+Mapping is keyed by identity filepath (canonical) with app_name as metadata.
+Supports exclusion lists to prevent certain apps from using hardware.
 """
 
+import json
+import logging
 import os
+import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from .exceptions import (
     AppNotMappedError,
@@ -17,6 +23,7 @@ from .exceptions import (
     PKCS11ConfigError,
 )
 
+logger = logging.getLogger(__name__)
 
 # PIV slots in order of allocation priority
 PIV_SLOTS = ["9a", "9c", "9d", "9e"]
@@ -30,31 +37,43 @@ PIV_SLOT_NAMES = {
 
 class AppIdentityMapper:
     """
-    Maps app names to PIV slots with first-come-first-served allocation.
+    Maps identity filepaths to PIV slots with first-come-first-served allocation.
 
-    Stores mapping persistently in ~/.config/reticulum/pkcs11_app_slots.conf.
+    Stores mapping persistently in ~/.config/reticulum/pkcs11_app_slots.json.
+    
+    Mapping format (JSON):
+    {
+        "/home/user/.reticulum/storage/identities/meshchat.identity": {
+            "slot": "9C",
+            "provider": "libykcs11",
+            "app_name": "meshchat",
+            "created": 1234567890
+        }
+    }
     """
 
-    def __init__(self, config_dir: str | None = None):
+    def __init__(self, config_dir: str | None = None, exclude_apps: list[str] | None = None):
         """
         Initialize mapper.
 
         Args:
             config_dir: Config directory. Defaults to ~/.config/reticulum/
+            exclude_apps: List of app names to exclude from hardware backing
         """
         if config_dir is None:
             config_dir = os.path.expanduser("~/.config/reticulum")
         
         self.config_dir = Path(config_dir)
-        self.config_file = self.config_dir / "pkcs11_app_slots.conf"
-        self._mapping = {}  # app_name -> slot
+        self.config_file = self.config_dir / "pkcs11_app_slots.json"
+        self.exclude_apps = set(exclude_apps or [])
+        self._mapping = {}  # filepath -> {"slot": "9c", "app_name": "...", "created": ...}
         self._slot_apps = {}  # slot -> app_names (list, for sharing)
         
         # Load existing mapping
         self._load_mapping()
 
     def _load_mapping(self) -> None:
-        """Load app->slot mapping from config file."""
+        """Load filepath->slot mapping from config file."""
         self._mapping.clear()
         self._slot_apps.clear()
         
@@ -63,69 +82,102 @@ class AppIdentityMapper:
         
         try:
             with open(self.config_file, "r") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith("#"):
-                        continue
-                    
-                    if "=" not in line:
-                        continue
-                    
-                    app, slots_str = line.split("=", 1)
-                    app = app.strip()
-                    
-                    # Parse slot(s) - can be comma-separated for shared slots
-                    slots = [s.strip() for s in slots_str.strip().split(",")]
-                    
-                    # Store mapping (use first slot as primary)
-                    if slots:
-                        self._mapping[app] = slots[0]
-                        
-                        # Track which apps use each slot
-                        for slot in slots:
-                            if slot not in self._slot_apps:
-                                self._slot_apps[slot] = []
-                            if app not in self._slot_apps[slot]:
-                                self._slot_apps[slot].append(app)
+                data = json.load(f)
+            
+            if not isinstance(data, dict):
+                logger.warning(f"Mapping file has invalid format (not a dict), rebuilding")
+                return
+            
+            # Load mappings
+            for filepath_key, mapping_info in data.items():
+                if not isinstance(mapping_info, dict):
+                    logger.warning(f"Skipping invalid mapping entry: {filepath_key}")
+                    continue
+                
+                slot = mapping_info.get("slot")
+                if not slot:
+                    logger.warning(f"Skipping mapping with no slot: {filepath_key}")
+                    continue
+                
+                # Store mapping
+                self._mapping[filepath_key] = mapping_info
+                
+                # Track which apps use each slot
+                if slot not in self._slot_apps:
+                    self._slot_apps[slot] = []
+                
+                app_name = mapping_info.get("app_name", "unknown")
+                if filepath_key not in self._slot_apps[slot]:
+                    self._slot_apps[slot].append(app_name)
+        
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse mapping file (corrupted JSON): {e}")
+            logger.warning("Mapping will be rebuilt from scratch")
         except Exception as e:
             raise PKCS11ConfigError(f"Failed to load app mapping: {e}") from e
 
     def _save_mapping(self) -> None:
-        """Save app->slot mapping to config file."""
+        """Save filepath->slot mapping to config file (JSON format)."""
         try:
             self.config_dir.mkdir(parents=True, exist_ok=True)
             
             with open(self.config_file, "w") as f:
-                f.write("# Auto-generated: app-to-PIV-slot mapping\n")
-                f.write("# Format: app_name = slot\n")
-                f.write("# Apps can share slots (comma-separated)\n\n")
-                
-                # Write in sorted order for consistency
-                for app in sorted(self._mapping.keys()):
-                    slot = self._mapping[app]
-                    # Check if slot is shared
-                    apps_on_slot = self._slot_apps.get(slot, [])
-                    if len(apps_on_slot) > 1:
-                        # Show as shared
-                        slots_str = ",".join(sorted(apps_on_slot))
-                        if app == apps_on_slot[0]:  # Only write once per slot
-                            f.write(f"{slot} = {slots_str}\n")
-                    else:
-                        f.write(f"{app} = {slot}\n")
+                json.dump(self._mapping, f, indent=2, sort_keys=True)
         except Exception as e:
             raise PKCS11ConfigError(f"Failed to save app mapping: {e}") from e
 
+    def is_app_excluded(self, app_name: str) -> bool:
+        """
+        Check if an app is in the exclusion list.
+
+        Args:
+            app_name: Application name
+
+        Returns:
+            True if app should not use hardware backing
+        """
+        return app_name in self.exclude_apps
+
+    def lookup_identity_for_filepath(self, filepath: str) -> Optional[str]:
+        """
+        Look up PIV slot for an identity filepath.
+
+        Args:
+            filepath: Full path to identity file (e.g., /home/user/.reticulum/storage/identities/meshchat.identity)
+
+        Returns:
+            Slot ID ("9a", "9c", "9d", "9e") or None if not mapped or app is excluded
+        """
+        # Check if filepath exists in mapping
+        mapping_info = self._mapping.get(filepath)
+        if not mapping_info:
+            return None
+        
+        # Check if app is excluded
+        app_name = mapping_info.get("app_name")
+        if app_name and self.is_app_excluded(app_name):
+            logger.debug(f"App '{app_name}' is in exclusion list, returning None for filepath: {filepath}")
+            return None
+        
+        return mapping_info.get("slot")
+
     def get_app_slot(self, app_name: str) -> Optional[str]:
         """
-        Get PIV slot for an app.
+        Get PIV slot for an app by app name (deprecated, use filepath-based lookup).
 
         Args:
             app_name: Application name
 
         Returns:
             Slot ID ("9a", "9c", "9d", "9e") or None if not mapped
+        
+        Note: This is a backward-compatibility method. Prefer lookup_identity_for_filepath()
         """
-        return self._mapping.get(app_name)
+        # Find first mapping with this app name
+        for filepath, mapping_info in self._mapping.items():
+            if mapping_info.get("app_name") == app_name:
+                return self.lookup_identity_for_filepath(filepath)
+        return None
 
     def get_slot_apps(self, slot: str) -> list[str]:
         """
@@ -151,44 +203,72 @@ class AppIdentityMapper:
         """
         return slot not in self._slot_apps or len(self._slot_apps[slot]) == 0
 
-    def allocate_slot_for_app(self, app_name: str) -> str:
+    def allocate_slot_for_app(self, app_name: str, identity_filepath: str | None = None) -> Optional[str]:
         """
         Allocate first available slot for app (first-come-first-served).
+        
+        If app is in exclusion list, returns None (signals to use software identity).
 
         Args:
             app_name: Application name
+            identity_filepath: Full path to identity file. If not provided, uses app_name 
+                              (for backward compatibility only)
 
         Returns:
-            Allocated slot ID
-
+            Allocated slot ID ("9a", "9c", "9d", "9e") or None if excluded
+        
         Raises:
             SlotNotFoundError: If all slots are full
         """
-        # Check if app already has a slot
-        if app_name in self._mapping:
-            return self._mapping[app_name]
+        # Check if app is excluded
+        if self.is_app_excluded(app_name):
+            logger.debug(f"App '{app_name}' is in exclusion list, skipping hardware allocation")
+            return None
+        
+        # Use provided filepath or generate one from app name (backward compat)
+        filepath = identity_filepath
+        if not filepath:
+            # For backward compatibility: construct filepath from app name
+            default_storage = os.path.expanduser("~/.reticulum/storage/identities")
+            filepath = os.path.join(default_storage, f"{app_name}.identity")
+            logger.debug(f"No filepath provided for '{app_name}', using: {filepath}")
+        
+        # Check if this filepath already has a mapping
+        if filepath in self._mapping:
+            slot = self._mapping[filepath].get("slot")
+            logger.debug(f"App '{app_name}' already has mapping at {filepath}: slot {slot}")
+            return slot
         
         # Find first available slot
         for slot in PIV_SLOTS:
             if self.is_slot_available(slot):
-                self._mapping[app_name] = slot
+                # Create new mapping
+                self._mapping[filepath] = {
+                    "slot": slot,
+                    "app_name": app_name,
+                    "created": int(time.time())
+                }
+                
                 if slot not in self._slot_apps:
                     self._slot_apps[slot] = []
                 self._slot_apps[slot].append(app_name)
+                
                 self._save_mapping()
+                logger.info(f"Created {app_name} identity on slot PIV:{slot.upper()}")
                 return slot
         
         raise SlotNotFoundError(
             f"No available PIV slots. All {len(PIV_SLOTS)} slots are in use."
         )
 
-    def share_slot(self, slot: str, app_name: str) -> None:
+    def share_slot(self, slot: str, app_name: str, identity_filepath: str | None = None) -> None:
         """
         Make an app share a slot with existing app(s).
 
         Args:
             slot: Slot ID
             app_name: Application name to add to slot
+            identity_filepath: Full path to identity file (optional)
 
         Raises:
             SlotNotFoundError: If slot doesn't exist
@@ -197,20 +277,41 @@ class AppIdentityMapper:
         if slot not in PIV_SLOTS:
             raise SlotNotFoundError(f"Invalid slot: {slot}")
         
-        # Check if app already mapped
-        if app_name in self._mapping:
-            current_slot = self._mapping[app_name]
-            if current_slot == slot:
-                return  # Already on this slot
-            raise SlotAlreadyOccupiedError(
-                f"App {app_name} already uses slot {current_slot}"
-            )
+        # Check if app is already on a different slot (by app_name)
+        for filepath, mapping_info in self._mapping.items():
+            if mapping_info.get("app_name") == app_name:
+                current_slot = mapping_info.get("slot")
+                if current_slot != slot:
+                    raise SlotAlreadyOccupiedError(
+                        f"App {app_name} already uses slot {current_slot}"
+                    )
+                # App already on this slot - return early
+                return
+        
+        # Use provided filepath or generate one
+        filepath = identity_filepath
+        if not filepath:
+            default_storage = os.path.expanduser("~/.reticulum/storage/identities")
+            filepath = os.path.join(default_storage, f"{app_name}.identity")
+        
+        # Check if this specific filepath already mapped to different slot
+        if filepath in self._mapping:
+            current_slot = self._mapping[filepath].get("slot")
+            if current_slot != slot:
+                raise SlotAlreadyOccupiedError(
+                    f"Filepath {filepath} already uses slot {current_slot}"
+                )
+            return  # Already mapped to this slot
         
         # Add app to slot
         if slot not in self._slot_apps:
             self._slot_apps[slot] = []
         
-        self._mapping[app_name] = slot
+        self._mapping[filepath] = {
+            "slot": slot,
+            "app_name": app_name,
+            "created": int(time.time())
+        }
         self._slot_apps[slot].append(app_name)
         self._save_mapping()
 
@@ -224,10 +325,18 @@ class AppIdentityMapper:
         Returns:
             Slot ID that was removed, or None if not mapped
         """
-        if app_name not in self._mapping:
+        # Find filepath for this app
+        filepath_to_remove = None
+        for filepath, mapping_info in self._mapping.items():
+            if mapping_info.get("app_name") == app_name:
+                filepath_to_remove = filepath
+                break
+        
+        if not filepath_to_remove:
             return None
         
-        slot = self._mapping.pop(app_name)
+        slot = self._mapping[filepath_to_remove].get("slot")
+        del self._mapping[filepath_to_remove]
         
         if slot in self._slot_apps:
             self._slot_apps[slot] = [
@@ -257,4 +366,9 @@ class AppIdentityMapper:
             else:
                 status += "[available]"
             lines.append(status)
+        
+        # Add exclusion info if any
+        if self.exclude_apps:
+            lines.append(f"\nExcluded apps: {', '.join(sorted(self.exclude_apps))}")
+        
         return "\n".join(lines)

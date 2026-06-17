@@ -324,30 +324,31 @@ class TestGetAppIdentityKeys:
                 del os.environ["SOFTHSM2_CONF"]
 
     @pytest.mark.backend
-    @pytest.mark.session_manager
     def test_get_app_identity_keys_unknown_app_returns_none(
         self, softhsm2_module_path, softhsm2_env
     ):
         """Test that unknown app returns None."""
-        from reticulum_pkcs11_identity.session_manager import (
-            get_session_manager,
-            shutdown_session,
-        )
+        from reticulum_pkcs11_identity.backend import PKCS11Backend
 
         old_conf = os.environ.get("SOFTHSM2_CONF")
         os.environ["SOFTHSM2_CONF"] = softhsm2_env["SOFTHSM2_CONF"]
 
         try:
-            manager = get_session_manager()
-            result = manager.initialize(pin="1234", auto_prompt=False)
-            if not result:
-                pytest.skip("Could not initialize session manager")
+            # Create backend and open session
+            backend = PKCS11Backend(
+                module_path=softhsm2_module_path,
+                token_label="TestToken",
+            )
+            backend.open_session(pin="1234")
+            
+            try:
+                keys = get_app_identity_keys("unknown_app_xyz_no_mapping", backend=backend)
+                assert keys is None
 
-            keys = get_app_identity_keys("unknown_app_xyz_no_mapping")
-            assert keys is None
+            finally:
+                backend.close()
 
         finally:
-            shutdown_session()
             if old_conf:
                 os.environ["SOFTHSM2_CONF"] = old_conf
             elif "SOFTHSM2_CONF" in os.environ:

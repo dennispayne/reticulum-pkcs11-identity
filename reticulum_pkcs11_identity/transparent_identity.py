@@ -16,7 +16,7 @@ from typing import Optional
 
 from .app_identity import AppIdentityMapper
 from .backend_piv import PKCS11PIVBackend
-from .config import PKCS11Config
+from .config import PKCS11Config, load_hardware_identity_config
 from .pkcs11_provider import get_default_provider
 from .exceptions import PKCS11ProviderNotFoundError
 
@@ -38,7 +38,12 @@ class TransparentHardwareIdentityFactory:
         """
         self.app_name = app_name
         self.config = PKCS11Config()
-        self.mapper = AppIdentityMapper()
+        
+        # Load exclude_apps from hardware_identity config
+        hw_config = load_hardware_identity_config()
+        exclude_apps = hw_config.get("exclude_apps", [])
+        
+        self.mapper = AppIdentityMapper(exclude_apps=exclude_apps)
         self.backend: Optional[PKCS11PIVBackend] = None
         self.slot: Optional[str] = None
         self._hardware_available = False
@@ -53,6 +58,10 @@ class TransparentHardwareIdentityFactory:
         This never raises exceptions. Any error silently returns False.
         """
         try:
+            # Check if app is excluded
+            if self.mapper.is_app_excluded(self.app_name):
+                return False
+            
             # Get PIN - must be available
             pin = self.config.get_pin()
             if not pin:
@@ -74,6 +83,10 @@ class TransparentHardwareIdentityFactory:
             self.slot = self.mapper.get_app_slot(self.app_name)
             if not self.slot:
                 self.slot = self.mapper.allocate_slot_for_app(self.app_name)
+
+            # If allocation returned None (app was excluded), fall back
+            if not self.slot:
+                return False
 
             # Verify we can open a session
             session = self.backend.open_session(self.slot)
@@ -185,7 +198,9 @@ def is_app_using_hardware(app_name: str) -> bool:
     Returns:
         True if app has a mapped slot, False otherwise
     """
-    mapper = AppIdentityMapper()
+    hw_config = load_hardware_identity_config()
+    exclude_apps = hw_config.get("exclude_apps", [])
+    mapper = AppIdentityMapper(exclude_apps=exclude_apps)
     return mapper.get_app_slot(app_name) is not None
 
 
@@ -196,7 +211,9 @@ def get_app_hardware_slot(app_name: str) -> Optional[str]:
     Returns:
         Slot ID ("9a", "9c", "9d", "9e") or None if app not mapped
     """
-    mapper = AppIdentityMapper()
+    hw_config = load_hardware_identity_config()
+    exclude_apps = hw_config.get("exclude_apps", [])
+    mapper = AppIdentityMapper(exclude_apps=exclude_apps)
     return mapper.get_app_slot(app_name)
 
 
@@ -207,7 +224,9 @@ def list_all_app_slots() -> dict[str, str]:
     Returns:
         Dict of {app_name: slot_id}
     """
-    mapper = AppIdentityMapper()
+    hw_config = load_hardware_identity_config()
+    exclude_apps = hw_config.get("exclude_apps", [])
+    mapper = AppIdentityMapper(exclude_apps=exclude_apps)
     result = {}
     for slot in ["9a", "9c", "9d", "9e"]:
         apps = mapper.get_slot_apps(slot)

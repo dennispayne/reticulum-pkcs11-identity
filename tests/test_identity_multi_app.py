@@ -3,10 +3,8 @@ Multi-app integration tests for Phase 3.
 
 Tests focus on:
   - Multi-app key provisioning (ensure_keys_for_app)
-  - Session manager integration with multiple apps
   - AppIdentityMapper with identity creation
   - Transparent RNS.Identity injection
-  - Session caching and PIN re-use across apps
 """
 
 import os
@@ -16,13 +14,7 @@ import threading
 import time
 
 from reticulum_pkcs11_identity.app_identity import AppIdentityMapper
-from reticulum_pkcs11_identity.session_manager import (
-    PKCSIISessionManager,
-    get_session_manager,
-    initialize_session,
-    shutdown_session,
-)
-from reticulum_pkcs11_identity.backend_piv import PKCS11PIVBackend
+from reticulum_pkcs11_identity.backend import PKCS11Backend
 from reticulum_pkcs11_identity.identity import (
     make_app_hardware_identity_class,
     create_app_hardware_identity,
@@ -132,111 +124,12 @@ class TestKeyProvisioningIntegration:
             assert result == first
 
 
-class TestSessionManagerMultiApp:
-    """Test session manager integration with multiple apps."""
-
-    @pytest.mark.session_manager
-    def test_session_manager_provides_backend_for_multiple_apps(
-        self, softhsm2_module_path, softhsm2_env
-    ):
-        """Test session manager backend works for multiple apps."""
-        old_conf = os.environ.get("SOFTHSM2_CONF")
-        os.environ["SOFTHSM2_CONF"] = softhsm2_env["SOFTHSM2_CONF"]
-
-        try:
-            manager = get_session_manager()
-            result = manager.initialize(pin="1234", auto_prompt=False)
-            if not result:
-                pytest.skip("Could not initialize session manager")
-
-            backend = manager.get_backend()
-            assert backend is not None
-
-            # Provision keys for multiple apps
-            apps = ["app_sess_1", "app_sess_2", "app_sess_3"]
-            keys = []
-            for app_name in apps:
-                ed_pub, x_pub = backend.ensure_keys_for_app(app_name)
-                keys.append((ed_pub, x_pub))
-
-            # All should succeed
-            assert len(keys) == 3
-            for ed, x in keys:
-                assert ed is not None
-                assert x is not None
-
-        finally:
-            shutdown_session()
-            if old_conf:
-                os.environ["SOFTHSM2_CONF"] = old_conf
-            elif "SOFTHSM2_CONF" in os.environ:
-                del os.environ["SOFTHSM2_CONF"]
-
-    @pytest.mark.session_manager
-    def test_session_manager_pin_cached_across_apps(
-        self, softhsm2_module_path, softhsm2_env
-    ):
-        """Test that PIN is cached and reused across app operations."""
-        old_conf = os.environ.get("SOFTHSM2_CONF")
-        os.environ["SOFTHSM2_CONF"] = softhsm2_env["SOFTHSM2_CONF"]
-
-        try:
-            manager = get_session_manager()
-            result = manager.initialize(pin="1234", auto_prompt=False)
-            if not result:
-                pytest.skip("Could not initialize session manager")
-
-            backend = manager.get_backend()
-
-            # Perform multiple operations without re-prompting
-            for i in range(5):
-                app_name = f"app_pin_cache_{i}"
-                ed_pub, x_pub = backend.ensure_keys_for_app(app_name)
-                assert ed_pub is not None
-
-            # If we got here, PIN was reused (no prompts)
-
-        finally:
-            shutdown_session()
-            if old_conf:
-                os.environ["SOFTHSM2_CONF"] = old_conf
-            elif "SOFTHSM2_CONF" in os.environ:
-                del os.environ["SOFTHSM2_CONF"]
-
-    @pytest.mark.session_manager
-    def test_session_manager_get_session_for_slot(
-        self, softhsm2_module_path, softhsm2_env
-    ):
-        """Test getting session for specific slot."""
-        old_conf = os.environ.get("SOFTHSM2_CONF")
-        os.environ["SOFTHSM2_CONF"] = softhsm2_env["SOFTHSM2_CONF"]
-
-        try:
-            manager = get_session_manager()
-            result = manager.initialize(pin="1234", auto_prompt=False)
-            if not result:
-                pytest.skip("Could not initialize session manager")
-
-            # Get sessions for different slots
-            session_9a = manager.get_session_for_slot("9a")
-            session_9c = manager.get_session_for_slot("9c")
-
-            # Both should work (session manager may return same session)
-            assert session_9a is not None or session_9c is not None
-
-        finally:
-            shutdown_session()
-            if old_conf:
-                os.environ["SOFTHSM2_CONF"] = old_conf
-            elif "SOFTHSM2_CONF" in os.environ:
-                del os.environ["SOFTHSM2_CONF"]
 
 
 class TestAppIdentityMapperIntegration:
     """Test AppIdentityMapper with identity creation."""
 
-    @pytest.mark.backend_piv
-    @pytest.mark.session_manager
+    @pytest.mark.backend
     def test_mapper_with_key_provisioning(
         self, softhsm2_module_path, softhsm2_env
     ):
@@ -246,38 +139,40 @@ class TestAppIdentityMapperIntegration:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             try:
-                manager = get_session_manager()
-                result = manager.initialize(pin="1234", auto_prompt=False)
-                if not result:
-                    pytest.skip("Could not initialize session manager")
+                # Create backend and open session
+                backend = PKCS11Backend(
+                    module_path=softhsm2_module_path,
+                    token_label="TestToken",
+                )
+                backend.open_session(pin="1234")
+                
+                try:
+                    # Map apps to slots
+                    mapper = AppIdentityMapper(config_dir=tmpdir)
+                    app1 = mapper.allocate_slot_for_app("app_map_1")
+                    app2 = mapper.allocate_slot_for_app("app_map_2")
 
-                backend = manager.get_backend()
+                    assert app1 == "9a"
+                    assert app2 == "9c"
 
-                # Map apps to slots
-                mapper = AppIdentityMapper(config_dir=tmpdir)
-                app1 = mapper.allocate_slot_for_app("app_map_1")
-                app2 = mapper.allocate_slot_for_app("app_map_2")
+                    # Provision keys
+                    ed1, x1 = backend.ensure_keys_for_app("app_map_1")
+                    ed2, x2 = backend.ensure_keys_for_app("app_map_2")
 
-                assert app1 == "9a"
-                assert app2 == "9c"
+                    # Verify isolation
+                    assert ed1 != ed2
+                    assert x1 != x2
 
-                # Provision keys
-                ed1, x1 = backend.ensure_keys_for_app("app_map_1")
-                ed2, x2 = backend.ensure_keys_for_app("app_map_2")
-
-                # Verify isolation
-                assert ed1 != ed2
-                assert x1 != x2
+                finally:
+                    backend.close()
 
             finally:
-                shutdown_session()
                 if old_conf:
                     os.environ["SOFTHSM2_CONF"] = old_conf
                 elif "SOFTHSM2_CONF" in os.environ:
                     del os.environ["SOFTHSM2_CONF"]
 
-    @pytest.mark.backend_piv
-    @pytest.mark.session_manager
+    @pytest.mark.backend
     def test_mapper_slot_exhaustion(
         self, softhsm2_module_path, softhsm2_env
     ):
@@ -287,30 +182,35 @@ class TestAppIdentityMapperIntegration:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             try:
-                manager = get_session_manager()
-                result = manager.initialize(pin="1234", auto_prompt=False)
-                if not result:
-                    pytest.skip("Could not initialize session manager")
+                # Create backend and open session
+                backend = PKCS11Backend(
+                    module_path=softhsm2_module_path,
+                    token_label="TestToken",
+                )
+                backend.open_session(pin="1234")
+                
+                try:
+                    mapper = AppIdentityMapper(config_dir=tmpdir)
 
-                mapper = AppIdentityMapper(config_dir=tmpdir)
+                    # Allocate all four slots
+                    slot1 = mapper.allocate_slot_for_app("app_1")
+                    slot2 = mapper.allocate_slot_for_app("app_2")
+                    slot3 = mapper.allocate_slot_for_app("app_3")
+                    slot4 = mapper.allocate_slot_for_app("app_4")
 
-                # Allocate all four slots
-                slot1 = mapper.allocate_slot_for_app("app_1")
-                slot2 = mapper.allocate_slot_for_app("app_2")
-                slot3 = mapper.allocate_slot_for_app("app_3")
-                slot4 = mapper.allocate_slot_for_app("app_4")
+                    assert slot1 == "9a"
+                    assert slot2 == "9c"
+                    assert slot3 == "9d"
+                    assert slot4 == "9e"
 
-                assert slot1 == "9a"
-                assert slot2 == "9c"
-                assert slot3 == "9d"
-                assert slot4 == "9e"
+                    # Fifth allocation should fail
+                    with pytest.raises(SlotNotFoundError):
+                        mapper.allocate_slot_for_app("app_5")
 
-                # Fifth allocation should fail
-                with pytest.raises(SlotNotFoundError):
-                    mapper.allocate_slot_for_app("app_5")
+                finally:
+                    backend.close()
 
             finally:
-                shutdown_session()
                 if old_conf:
                     os.environ["SOFTHSM2_CONF"] = old_conf
                 elif "SOFTHSM2_CONF" in os.environ:
@@ -347,8 +247,7 @@ class TestRNSIntegrationMultiApp:
         except ImportError:
             pytest.skip("RNS not installed")
 
-    @pytest.mark.backend_piv
-    @pytest.mark.session_manager
+    @pytest.mark.backend
     def test_enable_injection_doesnt_crash(
         self, softhsm2_module_path, softhsm2_env
     ):
@@ -357,16 +256,21 @@ class TestRNSIntegrationMultiApp:
         os.environ["SOFTHSM2_CONF"] = softhsm2_env["SOFTHSM2_CONF"]
 
         try:
-            manager = get_session_manager()
-            result = manager.initialize(pin="1234", auto_prompt=False)
-            if not result:
-                pytest.skip("Could not initialize session manager")
+            # Create backend and open session
+            backend = PKCS11Backend(
+                module_path=softhsm2_module_path,
+                token_label="TestToken",
+            )
+            backend.open_session(pin="1234")
+            
+            try:
+                # Should not crash (will be a no-op without explicit setup)
+                enable_hardware_identity_injection(backend=backend)
 
-            # Should not crash
-            enable_hardware_identity_injection()
+            finally:
+                backend.close()
 
         finally:
-            shutdown_session()
             if old_conf:
                 os.environ["SOFTHSM2_CONF"] = old_conf
             elif "SOFTHSM2_CONF" in os.environ:
@@ -534,35 +438,21 @@ class TestErrorHandlingMultiApp:
     def test_ensure_keys_nonexistent_backend_fails_gracefully(self):
         """Test that operations fail gracefully with no backend."""
         # With no backend, operations should fail gracefully
-        manager = get_session_manager()
-        # Don't initialize - backend is None
-
-        backend = manager.get_backend()
-        assert backend is None
-
-    @pytest.mark.backend_piv
-    def test_identity_creation_no_backend_returns_none(
-        self, softhsm2_module_path, softhsm2_env
-    ):
-        """Test that identity creation returns None without backend."""
-        from reticulum_pkcs11_identity.session_manager import shutdown_session
-
-        shutdown_session()
-
-        # Should return None gracefully
-        identity = create_app_hardware_identity("nonexistent_app")
+        # Simply creating an identity without backend should return None
+        identity = create_app_hardware_identity("test_app", backend=None)
         assert identity is None
 
     @pytest.mark.backend_piv
-    def test_get_keys_nonexistent_app_returns_none(
-        self, softhsm2_module_path, softhsm2_env
-    ):
+    def test_identity_creation_no_backend_returns_none(self):
+        """Test that identity creation returns None without backend."""
+        # Should return None gracefully when no backend provided
+        identity = create_app_hardware_identity("nonexistent_app", backend=None)
+        assert identity is None
+
+    @pytest.mark.backend_piv
+    def test_get_keys_nonexistent_app_returns_none(self):
         """Test that get_app_identity_keys returns None for unknown app."""
-        from reticulum_pkcs11_identity.session_manager import shutdown_session
-
-        shutdown_session()
-
-        keys = get_app_identity_keys("nonexistent_app_xyz")
+        keys = get_app_identity_keys("nonexistent_app_xyz", backend=None)
         assert keys is None
 
     @pytest.mark.backend_piv
