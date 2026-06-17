@@ -7,19 +7,29 @@ and transparently substitute hardware keys if available.
 **No app changes needed** (when integration is enabled).
 
 Integration strategy:
-  1. Monkey-patch RNS.Identity.__init__() to intercept identity creation
-  2. Detect app name (from calling code or env var)
-  3. Check if app has hardware slot mapped
-  4. If yes: inject hardware public keys, override sign() method
-  5. If no: create software identity as usual (app unaware)
+  1. At module import time, check if hardware_identity is enabled in config
+  2. If enabled: initialize PKCS#11 backend and monkey-patch RNS.Identity.__init__()
+  3. When identity created: detect app name and inject hardware keys if available
+  4. If no hardware available: create software identity as usual (app unaware)
+
+Module imports auto-initialize the patch based on config, but manual
+enable_hardware_identity_injection() is still available for explicit control.
 """
 
+import logging
 import os
 import sys
 import inspect
 from typing import Optional
 
 from .app_identity import AppIdentityMapper
+from .config import load_hardware_identity_config
+
+logger = logging.getLogger(__name__)
+
+# Global state for the auto-initialized backend
+_auto_initialized_backend = None
+_patch_installed = False
 
 
 def _detect_app_name() -> Optional[str]:
@@ -65,12 +75,13 @@ def _detect_app_name() -> Optional[str]:
     return None
 
 
-def _get_hardware_keys_for_app(app_name: str, backend=None) -> Optional[tuple[bytes, bytes]]:
+def _get_hardware_keys_for_app(app_name: str, backend=None, exclude_apps=None) -> Optional[tuple[bytes, bytes]]:
     """
     Get hardware public keys for an app.
 
     :param app_name: Application name
     :param backend: PKCS11Backend instance (required). If None, returns None.
+    :param exclude_apps: List of app names to exclude from hardware backing
     :returns:
         (ed25519_public, x25519_public) if available, None otherwise
     """
@@ -78,7 +89,7 @@ def _get_hardware_keys_for_app(app_name: str, backend=None) -> Optional[tuple[by
         return None
     
     try:
-        mapper = AppIdentityMapper()
+        mapper = AppIdentityMapper(exclude_apps=exclude_apps or [])
         slot = mapper.get_app_slot(app_name)
         
         if not slot:
@@ -103,35 +114,24 @@ def _get_hardware_keys_for_app(app_name: str, backend=None) -> Optional[tuple[by
         return None
 
 
-def enable_hardware_identity_injection(backend=None) -> None:
+def _install_monkey_patch(backend, exclude_apps=None) -> bool:
     """
-    Enable transparent hardware identity injection (deprecated).
-
-    This function is provided for backward compatibility but is deprecated.
-    Transparent injection without explicit backend setup is no longer supported.
-
-    For new code, use:
-    - make_app_hardware_identity_class() for explicit multi-app identities
-    - make_lxmf_identity_class() for LXMF identities
+    Install the monkey-patch on RNS.Identity.
     
-    Both require a PKCS11Backend instance to be passed explicitly.
-
-    :param backend: PKCS11Backend instance (optional, for future use).
+    :param backend: PKCS11Backend instance to use for hardware operations
+    :param exclude_apps: List of app names to exclude from hardware backing
+    :returns: True if patch installed successfully, False otherwise
     """
     try:
         import RNS
     except ImportError:
-        # RNS not installed - skip injection
-        return
+        logger.debug("RNS not installed - skipping hardware identity injection patch")
+        return False
 
-    if backend is None:
-        # Without explicit backend, transparent injection is not possible
-        RNS.log(
-            "Hardware identity injection requires explicit backend setup; "
-            "use make_app_hardware_identity_class() or make_lxmf_identity_class() instead",
-            RNS.LOG_DEBUG,
-        )
-        return
+    # Check if already patched
+    global _patch_installed
+    if _patch_installed:
+        return True
 
     # Save original __init__
     original_init = RNS.Identity.__init__
@@ -145,7 +145,7 @@ def enable_hardware_identity_injection(backend=None) -> None:
         hardware_keys = None
 
         if app_name:
-            hardware_keys = _get_hardware_keys_for_app(app_name, backend=backend)
+            hardware_keys = _get_hardware_keys_for_app(app_name, backend=backend, exclude_apps=exclude_apps)
 
         if hardware_keys:
             # Hardware keys available - inject them
@@ -158,7 +158,8 @@ def enable_hardware_identity_injection(backend=None) -> None:
             self.pub_bytes = x_pub
             self.sig_pub_bytes = ed_pub
             
-            slot = AppIdentityMapper().get_app_slot(app_name)
+            mapper = AppIdentityMapper(exclude_apps=exclude_apps or [])
+            slot = mapper.get_app_slot(app_name)
             
             if slot:
                 # Store hardware info for sign() override
@@ -192,6 +193,121 @@ def enable_hardware_identity_injection(backend=None) -> None:
 
     # Apply monkey patch
     RNS.Identity.__init__ = patched_init
+    _patch_installed = True
+    return True
+
+
+def _auto_initialize() -> None:
+    """
+    Auto-initialize hardware identity injection at module import time.
+    
+    This is called once when the module is imported. It:
+    1. Loads config from ~/.config/reticulum/config [hardware_identity] section
+    2. If enabled and not in exclude_apps:
+       - Initializes PKCS#11 backend
+       - Installs monkey patch
+       - Logs info message
+    3. If disabled or not configured:
+       - Logs info message
+    4. If enabled but provider unavailable:
+       - Logs warning
+       - Does not install patch (falls back to software identities)
+    """
+    global _auto_initialized_backend, _patch_installed
+    
+    try:
+        # Load config
+        config = load_hardware_identity_config()
+        exclude_apps = config.get("exclude_apps", [])
+        
+        if not config.get("enabled"):
+            logger.info("Hardware identity injection disabled or not configured")
+            return
+        
+        # Check if this app is in the exclude list
+        app_name = _detect_app_name()
+        if app_name and app_name in exclude_apps:
+            logger.info(f"Hardware identity injection disabled for excluded app: {app_name}")
+            return
+        
+        # Try to initialize backend
+        try:
+            from .backend import PKCS11Backend
+            
+            # Try to create backend with config settings
+            provider = config.get("provider")
+            token_label = config.get("token_label")
+            
+            # If provider not specified, try auto-detection
+            if not provider:
+                detected = config.get("detected_providers", {})
+                if detected.get("auto_selected"):
+                    provider = detected.get("auto_selected")
+            
+            if provider:
+                backend = PKCS11Backend(
+                    library_path=provider,
+                    slot_id=None,  # Will be auto-detected
+                    pin=None,  # Will be prompted or from env
+                )
+                _auto_initialized_backend = backend
+                
+                # Install the monkey patch with exclude_apps
+                if _install_monkey_patch(backend, exclude_apps=exclude_apps):
+                    logger.info("Hardware identity injection enabled")
+                    return
+            else:
+                logger.warning(
+                    "Hardware identity injection requested but no PKCS#11 provider configured or detected"
+                )
+                return
+        
+        except ImportError:
+            logger.warning("PKCS#11 backend not available - falling back to software identities")
+            return
+        except Exception as e:
+            logger.warning(f"Hardware identity injection requested but provider unavailable: {e}")
+            return
+    
+    except Exception as e:
+        logger.warning(f"Error during hardware identity auto-initialization: {e}")
+        return
+
+
+def enable_hardware_identity_injection(backend=None) -> None:
+    """
+    Manually enable transparent hardware identity injection.
+
+    This function allows explicit control over hardware identity injection,
+    overriding the auto-initialized state from config.
+
+    For most users, the auto-initialization at module import handles this.
+    Use this function only if you need explicit control or a non-standard
+    backend setup.
+
+    Args:
+        backend: PKCS11Backend instance. If None, uses the auto-initialized backend.
+                If no backend is available, logs an info message and returns.
+    """
+    global _auto_initialized_backend
+    
+    if backend is None:
+        backend = _auto_initialized_backend
+    
+    if backend is None:
+        try:
+            import RNS
+            RNS.log(
+                "Hardware identity injection requires a PKCS#11 backend; "
+                "check config [hardware_identity] section or pass backend explicitly",
+                RNS.LOG_INFO,
+            )
+        except ImportError:
+            logger.info("RNS not available for hardware identity injection")
+        return
+
+    # Install patch with provided/auto backend
+    _install_monkey_patch(backend)
 
 
 def is_identity_hardware_backed(identity) -> bool:
@@ -231,3 +347,7 @@ def get_identity_slot(identity) -> Optional[str]:
         Slot ID ("9a", "9c", etc.) or None if not hardware-backed
     """
     return getattr(identity, "_hw_slot", None)
+
+
+# Auto-initialize hardware identity injection at module import time
+_auto_initialize()

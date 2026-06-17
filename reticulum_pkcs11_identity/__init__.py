@@ -60,6 +60,12 @@ from .lxmf import (
     create_lxmf_hardware_identity,
     load_lxmf_hardware_identity_config,
 )
+from .rns_integration import (
+    enable_hardware_identity_injection,
+    is_identity_hardware_backed,
+    get_identity_app_name,
+    get_identity_slot,
+)
 
 __all__ = [
     "PKCS11Backend",
@@ -85,4 +91,8 @@ __all__ = [
     "format_token_inventory",
     "categorize_providers",
     "select_provider",
+    "enable_hardware_identity_injection",
+    "is_identity_hardware_backed",
+    "get_identity_app_name",
+    "get_identity_slot",
 ]
