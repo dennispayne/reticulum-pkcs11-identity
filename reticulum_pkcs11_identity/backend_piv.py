@@ -422,3 +422,133 @@ class PKCS11PIVBackend:
                 raise
             except Exception as exc:
                 raise PKCS11BackendError(f"ECDH derivation failed: {exc}") from exc
+
+    def ensure_keys_for_app(
+        self,
+        app_name: str,
+        slot: str | None = None,
+    ) -> tuple[bytes, bytes]:
+        """
+        Ensure Ed25519 and X25519 keys exist for a multi-app identity.
+
+        Checks if keys exist for the app. If either key is missing, generates it
+        on the token. Keys are labeled with app name for per-app isolation.
+
+        Args:
+            app_name: Application identifier for key labeling
+            slot: PIV slot hint (e.g., "9a" for AUTHENTICATION) - informational only
+
+        Returns:
+            (ed25519_public_key_raw, x25519_public_key_raw) tuple
+
+        Raises:
+            PKCS11BackendError: If key generation fails
+            PKCS11KeyNotFoundError: If keys cannot be retrieved after generation
+
+        Notes:
+            - Ed25519 key labeled as "{app_name}-sign"
+            - X25519 key labeled as "{app_name}-enc"
+            - Keys are generated on-device (never leave token)
+            - All keys set CKA_EXTRACTABLE = False
+            - Subsequent calls return existing keys
+            - Thread-safe: operations serialized with lock
+        """
+        with self._lock:
+            session = self._require_session()
+            ed_label = f"{app_name}-sign"
+            x_label = f"{app_name}-enc"
+
+            try:
+                # Check for existing Ed25519 key
+                ed_keys = list(
+                    session.get_objects({
+                        ObjectClass.PRIVATE_KEY: None,
+                        KeyType.EC_EDWARDS: None,
+                        Attribute.LABEL: ed_label,
+                    })
+                )
+
+                if not ed_keys:
+                    # Generate Ed25519 keypair
+                    session.generate_keypair(
+                        KeyType.EC_EDWARDS,
+                        mechanism=Mechanism.EC_EDWARDS_KEY_PAIR_GEN,
+                        public_template={
+                            Attribute.EC_PARAMS: _ED25519_OID,
+                            Attribute.VERIFY: True,
+                            Attribute.TOKEN: True,
+                            Attribute.LABEL: ed_label,
+                            Attribute.ID: ed_label.encode(),
+                        },
+                        private_template={
+                            Attribute.SIGN: True,
+                            Attribute.TOKEN: True,
+                            Attribute.SENSITIVE: True,
+                            Attribute.EXTRACTABLE: False,
+                            Attribute.PRIVATE: True,
+                            Attribute.LABEL: ed_label,
+                            Attribute.ID: ed_label.encode(),
+                        },
+                    )
+
+                # Check for existing X25519 key
+                x_keys = list(
+                    session.get_objects({
+                        ObjectClass.PRIVATE_KEY: None,
+                        KeyType.EC_EDWARDS: None,
+                        Attribute.LABEL: x_label,
+                    })
+                )
+
+                if not x_keys:
+                    # Generate X25519 keypair
+                    session.generate_keypair(
+                        KeyType.EC_EDWARDS,
+                        mechanism=Mechanism.EC_EDWARDS_KEY_PAIR_GEN,
+                        public_template={
+                            Attribute.EC_PARAMS: _X25519_OID,
+                            Attribute.DERIVE: True,
+                            Attribute.TOKEN: True,
+                            Attribute.LABEL: x_label,
+                            Attribute.ID: x_label.encode(),
+                        },
+                        private_template={
+                            Attribute.DERIVE: True,
+                            Attribute.TOKEN: True,
+                            Attribute.SENSITIVE: True,
+                            Attribute.EXTRACTABLE: False,
+                            Attribute.PRIVATE: True,
+                            Attribute.LABEL: x_label,
+                            Attribute.ID: x_label.encode(),
+                        },
+                    )
+
+                # Retrieve public keys - query directly within lock to avoid re-entrance
+                ed_pub_keys = list(
+                    session.get_objects({
+                        ObjectClass.PUBLIC_KEY: None,
+                        Attribute.LABEL: ed_label,
+                    })
+                )
+                if not ed_pub_keys:
+                    raise PKCS11KeyNotFoundError(f"Public key not found after generation: {ed_label}")
+                ed_pub_bytes = _ec_point_to_raw(bytes(ed_pub_keys[0][Attribute.EC_POINT]))
+
+                x_pub_keys = list(
+                    session.get_objects({
+                        ObjectClass.PUBLIC_KEY: None,
+                        Attribute.LABEL: x_label,
+                    })
+                )
+                if not x_pub_keys:
+                    raise PKCS11KeyNotFoundError(f"Public key not found after generation: {x_label}")
+                x_pub_bytes = _ec_point_to_raw(bytes(x_pub_keys[0][Attribute.EC_POINT]))
+
+                return (ed_pub_bytes, x_pub_bytes)
+
+            except PKCS11KeyNotFoundError:
+                raise
+            except Exception as exc:
+                raise PKCS11BackendError(
+                    f"Failed to ensure keys for app '{app_name}': {exc}"
+                ) from exc
