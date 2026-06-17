@@ -74,42 +74,34 @@ class TestRealRNSIntegration:
             # Temporarily change HOME
             old_home = os.environ.get('HOME')
             os.environ['HOME'] = tmpdir
-            
+
+            # Snapshot the package module so we can restore import state and
+            # avoid leaking a re-imported package (which loses submodule
+            # attributes like `.discovery`) into other tests.
+            saved_module = sys.modules.get('reticulum_pkcs11_identity')
+
             try:
                 # Re-import to trigger auto-init
                 if 'reticulum_pkcs11_identity' in sys.modules:
                     del sys.modules['reticulum_pkcs11_identity']
-                
+
                 import reticulum_pkcs11_identity
-                
+
                 # Patch should be installed (or attempted to be)
                 # We can't directly check if it's installed, but we can
                 # verify no exceptions were raised during import
                 assert True
             finally:
+                # Restore original import state so the re-imported package does
+                # not pollute later tests.
+                if saved_module is not None:
+                    sys.modules['reticulum_pkcs11_identity'] = saved_module
+                else:
+                    sys.modules.pop('reticulum_pkcs11_identity', None)
                 if old_home:
                     os.environ['HOME'] = old_home
                 else:
-                    del os.environ['HOME']
-
-
-@pytest.mark.skipif(not HAS_RNS, reason="RNS not installed")
-@pytest.mark.integration
-@pytest.mark.hardware
-class TestRealHardwareIntegration:
-    """End-to-end tests with real PKCS#11 hardware."""
-    
-    def test_hardware_identity_creation_with_real_token(self, pkcs11_backend):
-        """Test that we can create identities with real token."""
-        pytest.skip("Requires real YubiKey or SoftHSM2 with keys")
-    
-    def test_hardware_identity_signs_with_token(self, pkcs11_backend):
-        """Test that hardware identities can actually sign."""
-        pytest.skip("Requires real YubiKey or SoftHSM2 with keys")
-    
-    def test_identity_to_file_from_hardware(self, pkcs11_backend):
-        """Test that hardware identity can be persisted to disk."""
-        pytest.skip("Requires real YubiKey or SoftHSM2 with keys")
+                    os.environ.pop('HOME', None)
 
 
 @pytest.mark.skipif(not HAS_RNS, reason="RNS not installed")

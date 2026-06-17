@@ -269,8 +269,8 @@
     {
       "id": "pytestNodeId",
       "type": "promptString",
-      "description": "Pytest node id (example: tests/test_backend.py::TestBackendECDH::test_ecdh_returns_32_bytes)",
-      "default": "tests/test_backend.py::TestBackendECDH"
+      "description": "Pytest node id (example: tests/unit/test_backend_errors.py::TestECPointConversion::test_ec_point_to_raw_too_short_raises)",
+      "default": "tests/unit/test_backend_errors.py::TestECPointConversion"
     }
   ]
 }

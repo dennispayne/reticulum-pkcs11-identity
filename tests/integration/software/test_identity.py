@@ -40,7 +40,7 @@ class TestMakeLXMFIdentityClass:
     @pytest.mark.backend
     def test_make_lxmf_identity_class_creates_class(self, pkcs11_backend):
         """Test that make_lxmf_identity_class returns a class."""
-        from conftest import SIGN_KEY_LABEL, ENC_KEY_LABEL
+        from tests.conftest import SIGN_KEY_LABEL, ENC_KEY_LABEL
 
         cls = make_lxmf_identity_class(
             backend=pkcs11_backend,
@@ -54,7 +54,7 @@ class TestMakeLXMFIdentityClass:
     @pytest.mark.backend
     def test_make_lxmf_identity_class_instantiation(self, pkcs11_backend):
         """Test instantiating identity from LXMF factory."""
-        from conftest import SIGN_KEY_LABEL, ENC_KEY_LABEL
+        from tests.conftest import SIGN_KEY_LABEL, ENC_KEY_LABEL
 
         cls = make_lxmf_identity_class(
             backend=pkcs11_backend,
@@ -72,7 +72,7 @@ class TestMakeLXMFIdentityClass:
     @pytest.mark.backend
     def test_make_lxmf_identity_class_marks_as_hardware(self, pkcs11_backend):
         """Test that LXMF identity is marked as hardware-backed."""
-        from conftest import SIGN_KEY_LABEL, ENC_KEY_LABEL
+        from tests.conftest import SIGN_KEY_LABEL, ENC_KEY_LABEL
 
         cls = make_lxmf_identity_class(
             backend=pkcs11_backend,
@@ -85,7 +85,7 @@ class TestMakeLXMFIdentityClass:
     @pytest.mark.backend
     def test_make_hardware_identity_class_alias(self, pkcs11_backend):
         """Test backward-compatible alias make_hardware_identity_class."""
-        from conftest import SIGN_KEY_LABEL, ENC_KEY_LABEL
+        from tests.conftest import SIGN_KEY_LABEL, ENC_KEY_LABEL
 
         cls = make_hardware_identity_class(
             backend=pkcs11_backend,
@@ -366,7 +366,7 @@ class TestBackwardCompatibility:
     @pytest.mark.backend
     def test_lxmf_identity_and_app_identity_same_structure(self, pkcs11_backend):
         """Test LXMF and app identities have same structure."""
-        from conftest import SIGN_KEY_LABEL, ENC_KEY_LABEL
+        from tests.conftest import SIGN_KEY_LABEL, ENC_KEY_LABEL
 
         # Create LXMF identity (old way)
         lxmf_cls = make_lxmf_identity_class(

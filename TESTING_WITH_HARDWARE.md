@@ -111,13 +111,21 @@ PKCS11_TEST_TOKEN=hw PKCS11_TEST_PIN=123456 pytest tests/ -v
 ### `pkcs11_backend` Fixture
 ```python
 @pytest.fixture(scope="session")
-def pkcs11_backend(softhsm2_module_path, softhsm2_env):
-    # Automatically selects token based on environment
-    # Handles both SoftHSM2 and hardware
-    # Yields opened, authenticated backend
+def pkcs11_backend(request):
+    # Selects the token based on PKCS11_TEST_TOKEN (hw / softhsm / auto).
+    # SoftHSM2 fixtures are pulled in lazily, so selecting hardware does NOT
+    # spuriously skip with a "SoftHSM2 is not installed" message.
+    # In hw mode the shared (generative) token suite skips cleanly and never
+    # writes to the token, because YubiKey PIV cannot generate/hold the
+    # Ed25519/X25519 keys these tests create. Yields an opened, authenticated
+    # SoftHSM2 backend otherwise.
 ```
 
-Uses the backend specified in `PKCS11_TEST_TOKEN`, with automatic fallback and helpful skip messages.
+> **Zero-skip note:** A full, zero-skip token run requires a *software*
+> (generative) token — install SoftHSM2 (Linux/CI, or SoftHSM2-for-Windows) and
+> use `PKCS11_TEST_TOKEN=softhsm`. A YubiKey alone cannot run the generative
+> token suite; real hardware is exercised by the dedicated tests under
+> `tests/integration/hardware/`.
 
 ## Troubleshooting
 

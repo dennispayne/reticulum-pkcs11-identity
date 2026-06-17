@@ -139,13 +139,21 @@ class PKCS11PIVBackend:
             try:
                 token = self._find_token()
                 self._bound_token = (token.label, token.serial, self._slot_id)
-                self._session = token.open(rw=True)
 
-                # Authenticate
+                # python-pkcs11 authenticates at session-open time via the
+                # ``user_pin`` argument; there is no separate ``Session.login()``
+                # method. Surfacing PinLocked/PinIncorrect distinctly is important
+                # for hardware safety: callers must NOT retry on a wrong PIN, as
+                # repeated failures lock the token's PIN counter.
                 try:
-                    self._session.login(self._pin)
+                    self._session = token.open(rw=True, user_pin=self._pin)
+                except pkcs11.exceptions.PinLocked as exc:
+                    raise PKCS11LoginError(
+                        "PIN is locked; the token's PIV applet must be reset"
+                    ) from exc
+                except pkcs11.exceptions.PinIncorrect as exc:
+                    raise PKCS11LoginError("Incorrect PIN") from exc
                 except Exception as exc:
-                    self._session.close()
                     raise PKCS11LoginError(f"Failed to authenticate: {exc}") from exc
 
                 self._state = SessionLifecycle.ACTIVE_SESSION

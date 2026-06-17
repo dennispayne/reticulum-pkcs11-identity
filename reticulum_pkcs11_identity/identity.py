@@ -60,6 +60,33 @@ from .exceptions import PKCS11BackendError, PKCS11KeyNotFoundError
 _HALF_KEYSIZE = _OriginalIdentity.KEYSIZE // 8 // 2  # 32 bytes
 
 
+class _TokenSigningKeyAdapter:
+    """Private-key stand-in for an Ed25519 key whose secret lives on a token.
+
+    When a destination accepts an inbound link, RNS reads
+    ``identity.sig_prv`` **directly** (``RNS.Link.__init__`` responder branch):
+    it calls ``sig_prv.public_key()`` to derive the link's signing public key
+    and later ``sig_prv.sign(...)`` to prove link packets. A hardware identity
+    holds no in-process private key (``sig_prv`` would be ``None``), so without
+    this adapter RNS raises ``'NoneType' object has no attribute 'public_key'``
+    and the destination cannot act as a link responder.
+
+    The adapter exposes the real public key and routes signing back through the
+    owning identity (and therefore the PKCS#11 token).
+    """
+
+    __slots__ = ("_identity",)
+
+    def __init__(self, identity):
+        self._identity = identity
+
+    def public_key(self):
+        return self._identity.sig_pub
+
+    def sign(self, message: bytes) -> bytes:
+        return self._identity.sign(message)
+
+
 def make_lxmf_identity_class(
     backend: PKCS11Backend,
     sign_key_label: str,
@@ -155,6 +182,14 @@ def make_lxmf_identity_class(
 
             self.update_hashes()
             self._is_local_hardware = True
+
+            # Let RNS use this identity as a *link responder*. The responder
+            # path in RNS reads ``identity.sig_prv`` directly (it does not call
+            # ``sign()``), so expose an adapter that yields the real public key
+            # and routes signing to the token. ``prv`` stays ``None``: link
+            # encryption uses freshly generated ephemeral X25519 keys, never the
+            # identity's static encryption key.
+            self.sig_prv = _TokenSigningKeyAdapter(self)
 
             RNS.log(
                 f"Hardware identity loaded from PKCS#11 token "
@@ -568,6 +603,10 @@ def make_app_hardware_identity_class(
 
             self.update_hashes()
             self._is_local_hardware = True
+
+            # See _TokenSigningKeyAdapter: enables this identity to accept
+            # inbound RNS links (responder path reads ``sig_prv`` directly).
+            self.sig_prv = _TokenSigningKeyAdapter(self)
 
             RNS.log(
                 f"App '{app_name}' hardware identity loaded from PKCS#11 slot {slot} "

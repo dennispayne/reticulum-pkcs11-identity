@@ -50,16 +50,32 @@ include = ["reticulum_pkcs11_identity*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v"
+# Use a workspace-local base temp dir. This avoids a Windows-only crash where
+# pytest's session teardown fails with PermissionError [WinError 5] trying to
+# unlink the locked `pytest-current` junction under the system TEMP dir, which
+# makes pytest exit non-zero and causes the VS Code Test Explorer to mark an
+# otherwise-passing run as failed (all icons turn red).
+addopts = "-v --basetemp=.pytest_tmp"
 markers = [
     "backend: backend unit tests",
     "backend_piv: PIV backend specific tests",
+    "backend_features: backend feature-availability tests",
+    "backend_state: backend state-management tests",
+    "backend_validation: backend input-validation tests",
+    "backend_consistency: backend consistency tests",
+    "primitives: low-level crypto primitive tests",
+    "keygen: key generation tests",
+    "recovery: error-recovery tests",
+    "threading: thread-safety tests",
+    "monitor: token monitor tests",
     "identity: LXMF user identity unit tests",
     "discovery: token discovery tests",
     "lifecycle: backend lifecycle tests",
     "lxmf: lxmf bootstrap/config tests",
     "session_manager: session manager integration tests",
     "integration: integration tests (slower, may require hardware)",
+    "software: integration tests that run against a software token (SoftHSM2)",
+    "hardware: integration tests that require a real hardware token (e.g. YubiKey)",
 ]
 
 [tool.coverage.run]
