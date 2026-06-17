@@ -318,3 +318,63 @@ def hardware_identity_class(pkcs11_backend):
 def hardware_identity(hardware_identity_class):
     """A single HardwareIdentity instance for the test session."""
     return hardware_identity_class(create_keys=True)
+
+
+# ----- pytest hooks for early initialization --------------------------------
+
+
+def pytest_configure(config):
+    """
+    Initialize SoftHSM2 early during test discovery.
+    
+    This hook runs before any tests are collected, ensuring SOFTHSM2_CONF
+    is set in the environment. This prevents discovery failures in VS Code
+    and other IDEs.
+    """
+    # Only initialize once, even if this hook is called multiple times
+    if "SOFTHSM2_CONF" in os.environ:
+        return
+    
+    # Only auto-initialize if we're using SoftHSM2 (not explicitly using hardware)
+    if os.environ.get("PKCS11_TEST_TOKEN", "").lower() == "hw":
+        return
+    
+    # Check if SoftHSM2 is available
+    if shutil.which("softhsm2-util") is None:
+        # SoftHSM2 not installed, but tests may skip gracefully
+        return
+    
+    module_path = _find_softhsm_module()
+    if module_path is None:
+        return
+    
+    # Create a temporary directory for SoftHSM2 token
+    token_dir = tempfile.mkdtemp(prefix="softhsm2_tokens_")
+    conf_path = os.path.join(os.path.dirname(token_dir), "softhsm2.conf")
+    
+    # Write SoftHSM2 config
+    with open(conf_path, "w") as fh:
+        fh.write(f"directories.tokendir = {token_dir}\n")
+        fh.write("objectstore.backend = file\n")
+        fh.write("log.level = ERROR\n")
+        fh.write("slots.removable = false\n")
+    
+    # Set environment variable
+    os.environ["SOFTHSM2_CONF"] = conf_path
+    
+    # Initialize the token
+    env = dict(os.environ)
+    result = _softhsm2_util(
+        "--init-token",
+        "--slot", "0",
+        "--label", TOKEN_LABEL,
+        "--pin", TOKEN_PIN,
+        "--so-pin", TOKEN_SOPIN,
+        env=env,
+    )
+    
+    if result.returncode != 0:
+        # If initialization fails, unset the config so tests skip gracefully
+        if "SOFTHSM2_CONF" in os.environ:
+            del os.environ["SOFTHSM2_CONF"]
+

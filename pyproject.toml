@@ -59,6 +59,7 @@ markers = [
     "lifecycle: backend lifecycle tests",
     "lxmf: lxmf bootstrap/config tests",
     "session_manager: session manager integration tests",
+    "integration: integration tests (slower, may require hardware)",
 ]
 
 [tool.coverage.run]
