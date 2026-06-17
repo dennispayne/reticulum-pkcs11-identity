@@ -138,28 +138,57 @@ class AppIdentityMapper:
         """
         return app_name in self.exclude_apps
 
-    def lookup_identity_for_filepath(self, filepath: str) -> Optional[str]:
+    def lookup_identity_for_filepath(self, filepath: str, backend=None) -> Optional[str]:
         """
         Look up PIV slot for an identity filepath.
+        
+        Uses two strategies:
+        1. Check local mapping (fast path for single-node)
+        2. If not found and backend provided, try cross-node discovery
+           (matches public keys on token)
 
         Args:
             filepath: Full path to identity file (e.g., /home/user/.reticulum/storage/identities/meshchat.identity)
+            backend: Optional PKCS11Backend for cross-node discovery
 
         Returns:
             Slot ID ("9a", "9c", "9d", "9e") or None if not mapped or app is excluded
         """
-        # Check if filepath exists in mapping
+        # Strategy 1: Check if filepath exists in mapping (fast path)
         mapping_info = self._mapping.get(filepath)
-        if not mapping_info:
-            return None
+        if mapping_info:
+            # Check if app is excluded
+            app_name = mapping_info.get("app_name")
+            if app_name and self.is_app_excluded(app_name):
+                logger.debug(f"App '{app_name}' is in exclusion list, returning None for filepath: {filepath}")
+                return None
+            
+            return mapping_info.get("slot")
         
-        # Check if app is excluded
-        app_name = mapping_info.get("app_name")
-        if app_name and self.is_app_excluded(app_name):
-            logger.debug(f"App '{app_name}' is in exclusion list, returning None for filepath: {filepath}")
-            return None
+        # Strategy 2: Cross-node discovery via public key matching
+        # (handles case where YubiKey was set up on different node)
+        if backend and os.path.exists(filepath):
+            logger.debug(f"Local mapping not found for {filepath}, attempting cross-node discovery")
+            
+            try:
+                from .cross_node_discovery import discover_identity_on_token
+                
+                slot = discover_identity_on_token(filepath, backend)
+                if slot is not None:
+                    # Cache this mapping for next time
+                    try:
+                        # Extract app name from filepath for logging
+                        app_name = os.path.basename(filepath).replace('.identity', '')
+                        self.save_mapping(filepath, slot, app_name)
+                        logger.info(f"Cached cross-node discovery: {filepath} → {slot}")
+                    except Exception as e:
+                        logger.warning(f"Could not cache discovered mapping: {e}")
+                    
+                    return slot
+            except Exception as e:
+                logger.debug(f"Cross-node discovery failed: {e}")
         
-        return mapping_info.get("slot")
+        return None
 
     def get_app_slot(self, app_name: str) -> Optional[str]:
         """
