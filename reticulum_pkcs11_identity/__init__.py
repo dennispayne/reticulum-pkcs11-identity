@@ -40,7 +40,13 @@ from .exceptions import (
     PKCS11LoginError,
     PKCS11SessionError,
 )
-from .identity import make_hardware_identity_class, make_lxmf_identity_class
+from .identity import (
+    make_hardware_identity_class,
+    make_lxmf_identity_class,
+    make_app_hardware_identity_class,
+    create_app_hardware_identity,
+    get_app_identity_keys,
+)
 from .lxmf import (
     LXMFHardwareIdentityConfig,
     LXMFHardwareIdentityHandle,
@@ -59,6 +65,9 @@ __all__ = [
     "PKCS11SessionError",
     "make_lxmf_identity_class",
     "make_hardware_identity_class",
+    "make_app_hardware_identity_class",
+    "create_app_hardware_identity",
+    "get_app_identity_keys",
     "LXMFHardwareIdentityConfig",
     "LXMFHardwareIdentityHandle",
     "load_lxmf_hardware_identity_config",
