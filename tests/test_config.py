@@ -6,7 +6,7 @@ import os
 import tempfile
 import pytest
 
-from reticulum_pkcs11_identity.config import PKCS11Config, ConfigBuilder
+from reticulum_pkcs11_identity.config import PKCS11Config, ConfigBuilder, load_hardware_identity_config
 from reticulum_pkcs11_identity.exceptions import PKCS11ConfigError
 
 
@@ -132,6 +132,198 @@ class TestPKCS11Config:
             repr_str = repr(config)
             assert "PKCS11Config" in repr_str
             assert "***" in repr_str  # PIN should be masked
+
+
+class TestHardwareIdentityConfig:
+    """Test hardware_identity section parsing."""
+
+    def test_hardware_identity_config_not_found(self):
+        """Test graceful handling when config file not found."""
+        config = load_hardware_identity_config("/nonexistent/config")
+        
+        assert config["enabled"] is False
+        assert config["provider"] is None
+        assert config["token_label"] is None
+        assert config["exclude_apps"] == []
+        assert config["detected_providers"] == {}
+
+    def test_hardware_identity_config_no_section(self):
+        """Test when Reticulum config exists but no [hardware_identity] section."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = os.path.join(tmpdir, "config")
+            
+            # Write a Reticulum config without [hardware_identity] section
+            with open(config_file, "w") as f:
+                f.write("[interface_default]\n")
+                f.write("enabled = true\n")
+            
+            config = load_hardware_identity_config(config_file)
+            
+            assert config["enabled"] is False
+            assert config["provider"] is None
+            assert config["exclude_apps"] == []
+
+    def test_hardware_identity_config_enabled(self):
+        """Test parsing enabled flag."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = os.path.join(tmpdir, "config")
+            
+            with open(config_file, "w") as f:
+                f.write("[hardware_identity]\n")
+                f.write("enabled = true\n")
+            
+            config = load_hardware_identity_config(config_file)
+            assert config["enabled"] is True
+
+    def test_hardware_identity_config_enabled_variants(self):
+        """Test various boolean representations for enabled."""
+        variants = [
+            ("true", True),
+            ("yes", True),
+            ("1", True),
+            ("on", True),
+            ("false", False),
+            ("no", False),
+            ("0", False),
+            ("off", False),
+        ]
+        
+        for variant, expected in variants:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                config_file = os.path.join(tmpdir, "config")
+                
+                with open(config_file, "w") as f:
+                    f.write("[hardware_identity]\n")
+                    f.write(f"enabled = {variant}\n")
+                
+                config = load_hardware_identity_config(config_file)
+                assert config["enabled"] is expected, f"Failed for variant: {variant}"
+
+    def test_hardware_identity_config_provider(self):
+        """Test parsing provider setting."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = os.path.join(tmpdir, "config")
+            
+            with open(config_file, "w") as f:
+                f.write("[hardware_identity]\n")
+                f.write("provider = libykcs11\n")
+            
+            config = load_hardware_identity_config(config_file)
+            assert config["provider"] == "libykcs11"
+
+    def test_hardware_identity_config_provider_path(self):
+        """Test parsing provider as file path."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = os.path.join(tmpdir, "config")
+            
+            # Create a dummy provider file
+            provider_path = os.path.join(tmpdir, "libykcs11.so")
+            with open(provider_path, "w") as f:
+                f.write("dummy")
+            
+            with open(config_file, "w") as f:
+                f.write("[hardware_identity]\n")
+                f.write(f"provider = {provider_path}\n")
+            
+            config = load_hardware_identity_config(config_file)
+            assert config["provider"] == provider_path
+
+    def test_hardware_identity_config_token_label(self):
+        """Test parsing token_label setting."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = os.path.join(tmpdir, "config")
+            
+            with open(config_file, "w") as f:
+                f.write("[hardware_identity]\n")
+                f.write("token_label = YubiKey PIV #12345\n")
+            
+            config = load_hardware_identity_config(config_file)
+            assert config["token_label"] == "YubiKey PIV #12345"
+
+    def test_hardware_identity_config_exclude_apps_comma_separated(self):
+        """Test parsing exclude_apps as comma-separated list."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = os.path.join(tmpdir, "config")
+            
+            with open(config_file, "w") as f:
+                f.write("[hardware_identity]\n")
+                f.write("exclude_apps = app1, app2, app3\n")
+            
+            config = load_hardware_identity_config(config_file)
+            assert config["exclude_apps"] == ["app1", "app2", "app3"]
+
+    def test_hardware_identity_config_exclude_apps_single(self):
+        """Test parsing exclude_apps with single entry."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = os.path.join(tmpdir, "config")
+            
+            with open(config_file, "w") as f:
+                f.write("[hardware_identity]\n")
+                f.write("exclude_apps = debug_app\n")
+            
+            config = load_hardware_identity_config(config_file)
+            assert config["exclude_apps"] == ["debug_app"]
+
+    def test_hardware_identity_config_exclude_apps_whitespace(self):
+        """Test exclude_apps with extra whitespace."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = os.path.join(tmpdir, "config")
+            
+            with open(config_file, "w") as f:
+                f.write("[hardware_identity]\n")
+                f.write("exclude_apps =   app1  ,  app2  ,   app3  \n")
+            
+            config = load_hardware_identity_config(config_file)
+            assert config["exclude_apps"] == ["app1", "app2", "app3"]
+
+    def test_hardware_identity_config_all_settings(self):
+        """Test parsing all settings together."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = os.path.join(tmpdir, "config")
+            
+            with open(config_file, "w") as f:
+                f.write("[hardware_identity]\n")
+                f.write("enabled = true\n")
+                f.write("provider = libykcs11\n")
+                f.write("token_label = YubiKey PIV #12345\n")
+                f.write("exclude_apps = my_test_tool, debug_app, another_app\n")
+            
+            config = load_hardware_identity_config(config_file)
+            
+            assert config["enabled"] is True
+            assert config["provider"] == "libykcs11"
+            assert config["token_label"] == "YubiKey PIV #12345"
+            assert config["exclude_apps"] == ["my_test_tool", "debug_app", "another_app"]
+
+    def test_hardware_identity_config_malformed(self):
+        """Test graceful handling of malformed config."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = os.path.join(tmpdir, "config")
+            
+            # Write malformed config
+            with open(config_file, "w") as f:
+                f.write("[hardware_identity]\n")
+                f.write("this is not valid ini format\n")
+            
+            # Should not raise, should return defaults
+            config = load_hardware_identity_config(config_file)
+            assert config["enabled"] is False
+            assert config["provider"] is None
+
+    def test_hardware_identity_config_missing_provider_file(self):
+        """Test warning logged when provider file doesn't exist."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = os.path.join(tmpdir, "config")
+            
+            with open(config_file, "w") as f:
+                f.write("[hardware_identity]\n")
+                f.write("enabled = true\n")
+                f.write("provider = /nonexistent/path/libykcs11.so\n")
+            
+            # Should not raise, should return config with warning
+            config = load_hardware_identity_config(config_file)
+            assert config["enabled"] is True
+            assert config["provider"] == "/nonexistent/path/libykcs11.so"
 
 
 if __name__ == "__main__":

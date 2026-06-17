@@ -132,10 +132,25 @@ class PKCS11Backend:
         self._pin_callback = None
         self._prompt: str | None = None
         self._bound_token_fingerprint: tuple[str, str, int] | None = None
+        self._token_monitor = None
 
     @property
     def lifecycle_state(self) -> SessionLifecycle:
         return self._state
+
+    def get_token_monitor(self):
+        """
+        Get or create the token monitor for this backend.
+
+        The monitor tracks provider and token state changes. Use it to
+        detect when tokens are swapped and invalidate sessions.
+
+        :returns: TokenMonitor instance
+        """
+        if self._token_monitor is None:
+            from .token_monitor import TokenMonitor
+            self._token_monitor = TokenMonitor(self)
+        return self._token_monitor
 
     # ------------------------------------------------------------------
     # Session management

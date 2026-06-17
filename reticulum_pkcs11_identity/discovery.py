@@ -39,10 +39,13 @@ Provides:
 
 from __future__ import annotations
 
+import logging
 import os
 
 import pkcs11
-from pkcs11 import Attribute, KeyType, ObjectClass
+from pkcs11 import Attribute, KeyType, ObjectClass, SlotFlag
+
+_logger = logging.getLogger(__name__)
 
 # DER-encoded OID prefixes for Edwards curves
 # Ed25519 OID 1.3.101.112 → 06 03 2B 65 70
@@ -136,6 +139,161 @@ def _provider_type(module_path: str) -> str:
         if needle in lower:
             return ptype
     return "unknown"
+
+
+def _is_hardware_provider(module_path: str) -> bool:
+    """
+    Determine if a PKCS#11 provider is a hardware provider.
+
+    Checks if the module has slots with CKF_HW_SLOT flag set.
+    Handles load errors gracefully by checking module name hints first,
+    then attempting to query slot flags.
+
+    Args:
+        module_path: Path to PKCS#11 module
+
+    Returns:
+        True if hardware provider detected, False otherwise
+    """
+    try:
+        lib = pkcs11.lib(module_path)
+    except Exception:
+        return False
+
+    try:
+        slots = list(lib.get_slots())
+    except Exception:
+        return False
+
+    for slot in slots:
+        try:
+            if slot.flags & SlotFlag.HW_SLOT:
+                return True
+        except Exception:
+            continue
+
+    return False
+
+
+def _get_provider_label(module_path: str) -> str:
+    """
+    Extract a human-readable label for a provider.
+
+    Returns a label based on the module filename and type hints.
+
+    Args:
+        module_path: Path to PKCS#11 module
+
+    Returns:
+        Human-readable provider label
+    """
+    hint = _provider_hint(module_path)
+    return hint
+
+
+def categorize_providers(
+    additional_paths: list[str] | None = None,
+) -> dict:
+    """
+    Discover and categorize PKCS#11 providers into hardware, software, and unknown.
+
+    Finds all available PKCS#11 modules and categorizes them by interrogating
+    the CKF_HW_SLOT flag from each provider's slots.
+
+    Args:
+        additional_paths: Extra provider paths to include in discovery
+
+    Returns:
+        Dict with keys "hardware", "software", "unknown", each containing a list
+        of provider info dicts with keys: "name", "path", "label"
+
+    Example:
+        >>> result = categorize_providers()
+        >>> for provider in result["hardware"]:
+        ...     print(f"Hardware: {provider['name']} at {provider['path']}")
+    """
+    providers = {
+        "hardware": [],
+        "software": [],
+        "unknown": [],
+    }
+
+    discovered = discover_pkcs11_modules(additional_paths)
+
+    for module_path in discovered:
+        filename = os.path.basename(module_path)
+        name = os.path.splitext(filename)[0]
+        label = _get_provider_label(module_path)
+
+        provider_info = {
+            "name": name,
+            "path": module_path,
+            "label": label,
+        }
+
+        prov_type = _provider_type(module_path)
+
+        if prov_type == "hardware":
+            providers["hardware"].append(provider_info)
+        elif prov_type == "software":
+            providers["software"].append(provider_info)
+        else:
+            if _is_hardware_provider(module_path):
+                providers["hardware"].append(provider_info)
+            else:
+                providers["unknown"].append(provider_info)
+
+    return providers
+
+
+def select_provider(
+    categorized: dict,
+) -> dict | None:
+    """
+    Select a provider from categorized providers with smart logic.
+
+    Selection rules:
+      - If exactly 1 hardware provider: select it (log info)
+      - If >1 hardware provider: log warning, return None
+      - If 0 hardware but software exists: select first (log info)
+      - If nothing available: log warning, return None
+
+    Args:
+        categorized: Output from categorize_providers()
+
+    Returns:
+        Selected provider info dict or None if selection failed/ambiguous
+    """
+    hardware = categorized.get("hardware", [])
+    software = categorized.get("software", [])
+    unknown = categorized.get("unknown", [])
+
+    if len(hardware) == 1:
+        provider = hardware[0]
+        _logger.info(
+            f"Selected hardware provider: {provider['name']} "
+            f"({provider['label']}) at {provider['path']}"
+        )
+        return provider
+
+    if len(hardware) > 1:
+        names = ", ".join(p["name"] for p in hardware)
+        _logger.warning(
+            f"Multiple hardware providers detected ({names}). "
+            "Please specify which provider to use in configuration."
+        )
+        return None
+
+    if software:
+        provider = software[0]
+        _logger.info(
+            f"No hardware provider found. Using software provider: "
+            f"{provider['name']} ({provider['label']}) at {provider['path']}"
+        )
+        return provider
+
+    _logger.warning("No PKCS#11 providers found. Please install a provider.")
+    return None
 
 
 # ============================================================================

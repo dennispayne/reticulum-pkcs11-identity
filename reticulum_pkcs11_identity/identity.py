@@ -162,6 +162,33 @@ def make_lxmf_identity_class(
                 RNS.LOG_VERBOSE,
             )
 
+        def _check_token_state(self):
+            """
+            Check for token changes and raise if detected.
+
+            This is called before each cryptographic operation to detect
+            if the token has been swapped. If a change is detected, the
+            session is invalidated and a clear error is raised.
+
+            :raises RuntimeError: If token state has changed
+            """
+            try:
+                monitor = self._backend.get_token_monitor()
+                changed, reason = monitor.detect_changes()
+                if changed:
+                    monitor.invalidate_sessions()
+                    raise RuntimeError(
+                        f"PKCS#11 token has changed: {reason}. "
+                        "Please re-authenticate with PIN or physical card."
+                    )
+            except RuntimeError:
+                raise
+            except Exception as exc:
+                RNS.log(
+                    f"Token state check failed: {exc}",
+                    RNS.LOG_DEBUG,
+                ) if RNS.sl(RNS.LOG_DEBUG) else None
+
         # ------------------------------------------------------------------
         # Static / class-method overrides
         # ------------------------------------------------------------------
@@ -258,6 +285,7 @@ def make_lxmf_identity_class(
             """
             if self._is_local_hardware:
                 try:
+                    self._check_token_state()
                     return self._backend.sign(
                         message,
                         key_label=self._sign_key_label,
@@ -308,6 +336,9 @@ def make_lxmf_identity_class(
                     enforce_ratchets=enforce_ratchets,
                     ratchet_id_receiver=ratchet_id_receiver,
                 )
+
+            # Check for token changes before attempting ECDH operation
+            self._check_token_state()
 
             if len(ciphertext_token) <= _HALF_KEYSIZE:
                 RNS.log(
@@ -429,35 +460,21 @@ def make_app_hardware_identity_class(
     This factory creates a hardware-backed identity class suitable for
     multiple applications, each using its own PIV slot on a PKCS#11 token.
 
-    If backend is None, attempts to get it from the session manager.
+    If backend is None, must be provided explicitly.
     If slot is None, attempts to look it up via AppIdentityMapper.
 
     :param app_name: Application name (used for slot lookup and logging).
-    :param backend: An already-opened :class:`~.backend.PKCS11Backend`, or None
-                    to auto-obtain from session_manager.
+    :param backend: A :class:`~.backend.PKCS11Backend` instance (required).
     :param slot: PIV slot ID ("9a", "9c", "9d", "9e"), or None to auto-lookup.
     :returns: A new class derived from ``RNS.Identity``.
     :raises: PKCS11BackendError if backend/slot cannot be determined or keys not found.
     """
 
-    # Auto-obtain backend from session manager if needed
+    # Backend must be provided explicitly
     if backend is None:
-        try:
-            from .session_manager import get_session_manager
-            manager = get_session_manager()
-            if not manager.is_ready():
-                raise PKCS11BackendError(
-                    f"PKCS#11 session not initialized for app '{app_name}'"
-                )
-            backend = manager.get_backend()
-            if backend is None:
-                raise PKCS11BackendError(
-                    f"No PKCS#11 backend available for app '{app_name}'"
-                )
-        except ImportError:
-            raise PKCS11BackendError(
-                "session_manager module not available; provide backend explicitly"
-            )
+        raise PKCS11BackendError(
+            f"Backend must be provided explicitly for app '{app_name}'"
+        )
 
     # Auto-lookup slot via AppIdentityMapper if needed
     if slot is None:
@@ -796,26 +813,27 @@ def make_app_hardware_identity_class(
 # Utility functions for multi-app identity creation and querying
 # ============================================================================
 
-def create_app_hardware_identity(app_name: str) -> Optional[_OriginalIdentity]:
+def create_app_hardware_identity(app_name: str, backend: Optional[PKCS11Backend] = None, slot: Optional[str] = None) -> Optional[_OriginalIdentity]:
     """
     Create a hardware-backed identity for an application.
 
-    This convenience function handles all the setup: obtaining the backend
-    from the session manager, looking up the app's PIV slot, and instantiating
-    the identity.
-
     Usage:
         from reticulum_pkcs11_identity.identity import create_app_hardware_identity
-        identity = create_app_hardware_identity("myapp")
+        identity = create_app_hardware_identity("myapp", backend=backend_instance)
         if identity:
             print(f"Loaded identity: {identity.hexhash}")
 
-    :param app_name: Application name (must have slot allocation).
+    :param app_name: Application name.
+    :param backend: PKCS11Backend instance (required).
+    :param slot: PIV slot ID, or None to auto-lookup via AppIdentityMapper.
     :returns: HardwareIdentity instance, or None if unavailable.
     """
     try:
-        # Attempt to get backend and slot (will raise if not available)
-        IdentityClass = make_app_hardware_identity_class(app_name)
+        if backend is None:
+            raise PKCS11BackendError("Backend must be provided explicitly")
+        
+        # Create identity class and instantiate
+        IdentityClass = make_app_hardware_identity_class(app_name, backend=backend, slot=slot)
         return IdentityClass(create_keys=True)
     except (PKCS11BackendError, PKCS11KeyNotFoundError) as exc:
         RNS.log(
@@ -831,7 +849,7 @@ def create_app_hardware_identity(app_name: str) -> Optional[_OriginalIdentity]:
         return None
 
 
-def get_app_identity_keys(app_name: str) -> Optional[tuple[bytes, bytes]]:
+def get_app_identity_keys(app_name: str, backend: Optional[PKCS11Backend] = None, slot: Optional[str] = None) -> Optional[tuple[bytes, bytes]]:
     """
     Get public keys for an application's hardware identity.
 
@@ -839,32 +857,29 @@ def get_app_identity_keys(app_name: str) -> Optional[tuple[bytes, bytes]]:
 
     Usage:
         from reticulum_pkcs11_identity.identity import get_app_identity_keys
-        keys = get_app_identity_keys("myapp")
+        keys = get_app_identity_keys("myapp", backend=backend_instance)
         if keys:
             ed_pub, x_pub = keys
             print(f"Signing key: {ed_pub.hex()}")
             print(f"Encryption key: {x_pub.hex()}")
 
     :param app_name: Application name.
+    :param backend: PKCS11Backend instance (required).
+    :param slot: PIV slot ID, or None to auto-lookup via AppIdentityMapper.
     :returns: Tuple of (ed25519_public_key, x25519_public_key) as raw bytes,
               or None if keys cannot be retrieved.
     """
     try:
-        from .session_manager import get_session_manager
+        if backend is None:
+            raise PKCS11BackendError("Backend must be provided explicitly")
+        
         from .app_identity import AppIdentityMapper
 
-        manager = get_session_manager()
-        if not manager.is_ready():
-            return None
-
-        backend = manager.get_backend()
-        if backend is None:
-            return None
-
-        mapper = AppIdentityMapper()
-        slot = mapper.get_app_slot(app_name)
         if slot is None:
-            return None
+            mapper = AppIdentityMapper()
+            slot = mapper.get_app_slot(app_name)
+            if slot is None:
+                return None
 
         # Key labels follow the app-name convention
         sign_key_label = f"{app_name}-sign"

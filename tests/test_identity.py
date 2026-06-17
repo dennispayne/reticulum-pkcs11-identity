@@ -227,57 +227,52 @@ class TestCreateAppHardwareIdentity:
     """Test convenience function create_app_hardware_identity."""
 
     @pytest.mark.backend
-    @pytest.mark.session_manager
     def test_create_app_hardware_identity_with_session(
         self, softhsm2_module_path, softhsm2_env
     ):
-        """Test creating app identity through session manager."""
-        from reticulum_pkcs11_identity.session_manager import (
-            get_session_manager,
-            shutdown_session,
-        )
+        """Test creating app identity with explicit backend."""
+        from reticulum_pkcs11_identity.backend import PKCS11Backend
         from reticulum_pkcs11_identity.app_identity import AppIdentityMapper
 
         old_conf = os.environ.get("SOFTHSM2_CONF")
         os.environ["SOFTHSM2_CONF"] = softhsm2_env["SOFTHSM2_CONF"]
 
         try:
-            # Initialize session
-            manager = get_session_manager()
-            result = manager.initialize(pin="1234", auto_prompt=False)
-            if not result:
-                pytest.skip("Could not initialize session manager")
+            # Create backend and open session
+            backend = PKCS11Backend(
+                module_path=softhsm2_module_path,
+                token_label="TestToken",
+            )
+            backend.open_session(pin="1234")
+            
+            try:
+                # Allocate app
+                mapper = AppIdentityMapper()
+                app_name = "test_create_convenience"
+                mapper.allocate_slot_for_app(app_name)
 
-            # Allocate app
-            mapper = AppIdentityMapper()
-            app_name = "test_create_convenience"
-            mapper.allocate_slot_for_app(app_name)
+                # Ensure keys
+                backend.ensure_keys_for_app(app_name)
 
-            # Ensure keys
-            backend = manager.get_backend()
-            backend.ensure_keys_for_app(app_name)
+                # Create identity
+                identity = create_app_hardware_identity(app_name, backend=backend)
+                assert identity is not None
+                assert identity._is_local_hardware is True
+                assert identity.pub_bytes is not None
 
-            # Create identity
-            identity = create_app_hardware_identity(app_name)
-            assert identity is not None
-            assert identity._is_local_hardware is True
-            assert identity.pub_bytes is not None
+            finally:
+                backend.close()
 
         finally:
-            shutdown_session()
             if old_conf:
                 os.environ["SOFTHSM2_CONF"] = old_conf
             elif "SOFTHSM2_CONF" in os.environ:
                 del os.environ["SOFTHSM2_CONF"]
 
     def test_create_app_hardware_identity_no_session_returns_none(self):
-        """Test that create_app_hardware_identity returns None without session."""
-        from reticulum_pkcs11_identity.session_manager import shutdown_session
-
-        shutdown_session()
-
-        # Should return None gracefully
-        identity = create_app_hardware_identity("unknown_app")
+        """Test that create_app_hardware_identity without backend returns None."""
+        # Should return None gracefully when no backend provided
+        identity = create_app_hardware_identity("unknown_app", backend=None)
         assert identity is None
 
 
@@ -285,42 +280,44 @@ class TestGetAppIdentityKeys:
     """Test get_app_identity_keys query function."""
 
     @pytest.mark.backend
-    @pytest.mark.session_manager
     def test_get_app_identity_keys_returns_tuple(
         self, softhsm2_module_path, softhsm2_env
     ):
         """Test that get_app_identity_keys returns (ed_pub, x_pub) tuple."""
-        from reticulum_pkcs11_identity.session_manager import (
-            get_session_manager,
-            shutdown_session,
-        )
+        from reticulum_pkcs11_identity.backend import PKCS11Backend
         from reticulum_pkcs11_identity.app_identity import AppIdentityMapper
 
         old_conf = os.environ.get("SOFTHSM2_CONF")
         os.environ["SOFTHSM2_CONF"] = softhsm2_env["SOFTHSM2_CONF"]
 
         try:
-            manager = get_session_manager()
-            result = manager.initialize(pin="1234", auto_prompt=False)
-            if not result:
-                pytest.skip("Could not initialize session manager")
+            # Create backend and open session
+            backend = PKCS11Backend(
+                module_path=softhsm2_module_path,
+                token_label="TestToken",
+            )
+            backend.open_session(pin="1234")
+            
+            try:
+                # Allocate app
+                mapper = AppIdentityMapper()
+                app_name = "test_get_keys"
+                mapper.allocate_slot_for_app(app_name)
 
-            mapper = AppIdentityMapper()
-            app_name = "test_get_keys"
-            mapper.allocate_slot_for_app(app_name)
+                # Ensure keys
+                ed_pub, x_pub = backend.ensure_keys_for_app(app_name)
 
-            backend = manager.get_backend()
-            ed_pub, x_pub = backend.ensure_keys_for_app(app_name)
+                # Query keys
+                keys = get_app_identity_keys(app_name, backend=backend)
+                assert keys is not None
+                assert len(keys) == 2
+                assert keys[0] == ed_pub
+                assert keys[1] == x_pub
 
-            # Query keys
-            keys = get_app_identity_keys(app_name)
-            assert keys is not None
-            assert len(keys) == 2
-            assert keys[0] == ed_pub
-            assert keys[1] == x_pub
+            finally:
+                backend.close()
 
         finally:
-            shutdown_session()
             if old_conf:
                 os.environ["SOFTHSM2_CONF"] = old_conf
             elif "SOFTHSM2_CONF" in os.environ:
@@ -357,12 +354,8 @@ class TestGetAppIdentityKeys:
                 del os.environ["SOFTHSM2_CONF"]
 
     def test_get_app_identity_keys_no_session_returns_none(self):
-        """Test that no session returns None."""
-        from reticulum_pkcs11_identity.session_manager import shutdown_session
-
-        shutdown_session()
-
-        keys = get_app_identity_keys("any_app")
+        """Test that no backend returns None."""
+        keys = get_app_identity_keys("any_app", backend=None)
         assert keys is None
 
 

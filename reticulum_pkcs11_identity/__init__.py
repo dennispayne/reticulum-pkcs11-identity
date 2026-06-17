@@ -31,7 +31,14 @@
 """PKCS#11 support for explicit LXMF user identity provisioning."""
 
 from .backend import PKCS11Backend, SessionLifecycle
-from .discovery import discover_module_paths, enumerate_token_inventory, format_token_inventory
+from .config import load_hardware_identity_config
+from .discovery import (
+    discover_module_paths,
+    enumerate_token_inventory,
+    format_token_inventory,
+    categorize_providers,
+    select_provider,
+)
 from .exceptions import (
     PKCS11BackendError,
     PKCS11ConfigError,
@@ -63,6 +70,7 @@ __all__ = [
     "PKCS11KeyNotFoundError",
     "PKCS11LoginError",
     "PKCS11SessionError",
+    "load_hardware_identity_config",
     "make_lxmf_identity_class",
     "make_hardware_identity_class",
     "make_app_hardware_identity_class",
@@ -75,4 +83,6 @@ __all__ = [
     "discover_module_paths",
     "enumerate_token_inventory",
     "format_token_inventory",
+    "categorize_providers",
+    "select_provider",
 ]

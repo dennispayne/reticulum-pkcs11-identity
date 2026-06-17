@@ -5,11 +5,125 @@ Handles PIN, provider selection, token selection, and app-to-slot mapping.
 Config stored in ~/.config/reticulum/pkcs11_identity.conf
 """
 
+import configparser
+import logging
 import os
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 from .exceptions import PKCS11ConfigError
+
+logger = logging.getLogger(__name__)
+
+
+def load_hardware_identity_config(reticulum_config_path: str | None = None) -> Dict[str, Any]:
+    """
+    Load hardware_identity configuration from Reticulum config file.
+    
+    Args:
+        reticulum_config_path: Path to Reticulum config file.
+                              Defaults to ~/.config/reticulum/config
+    
+    Returns:
+        Config dict with keys:
+        {
+            "enabled": bool,
+            "provider": Optional[str],
+            "token_label": Optional[str],
+            "exclude_apps": List[str],
+            "detected_providers": Dict[str, Any]
+        }
+    """
+    if reticulum_config_path is None:
+        reticulum_config_path = os.path.expanduser("~/.config/reticulum/config")
+    
+    config_path = Path(reticulum_config_path)
+    config = {
+        "enabled": False,
+        "provider": None,
+        "token_label": None,
+        "exclude_apps": [],
+        "detected_providers": {}
+    }
+    
+    if not config_path.exists():
+        logger.debug(f"Reticulum config file not found: {config_path}")
+        return config
+    
+    try:
+        parser = configparser.ConfigParser()
+        parser.read(config_path)
+        
+        if not parser.has_section("hardware_identity"):
+            logger.debug("No [hardware_identity] section in Reticulum config")
+            return config
+        
+        # Parse enabled flag
+        if parser.has_option("hardware_identity", "enabled"):
+            enabled_str = parser.get("hardware_identity", "enabled").lower()
+            config["enabled"] = enabled_str in ("true", "yes", "1", "on")
+        
+        # Parse provider
+        if parser.has_option("hardware_identity", "provider"):
+            provider = parser.get("hardware_identity", "provider").strip()
+            if provider:
+                config["provider"] = provider
+                # Verify provider exists
+                provider_path = Path(provider)
+                if not provider_path.exists() and not os.path.isfile(provider):
+                    # Provider might be a name like "libykcs11", "opensc-pkcs11", "softhsm2"
+                    if provider not in ("libykcs11", "opensc-pkcs11", "softhsm2"):
+                        logger.warning(
+                            f"Configured provider not found: {provider}. "
+                            "Will attempt to detect available providers."
+                        )
+        
+        # Parse token_label
+        if parser.has_option("hardware_identity", "token_label"):
+            token_label = parser.get("hardware_identity", "token_label").strip()
+            if token_label:
+                config["token_label"] = token_label
+        
+        # Parse exclude_apps (comma-separated or as INI list)
+        if parser.has_option("hardware_identity", "exclude_apps"):
+            exclude_str = parser.get("hardware_identity", "exclude_apps").strip()
+            if exclude_str:
+                # Handle comma-separated or newline-separated values
+                apps = []
+                for item in exclude_str.split(","):
+                    item = item.strip()
+                    if item:
+                        apps.append(item)
+                # Also handle multiline format (each on new line with indentation)
+                if not apps and "\n" in exclude_str:
+                    for line in exclude_str.split("\n"):
+                        line = line.strip()
+                        if line:
+                            apps.append(line)
+                config["exclude_apps"] = apps
+        
+        # If enabled and provider not specified, detect available providers
+        if config["enabled"] and not config["provider"]:
+            try:
+                from .discovery import discover_pkcs11_modules
+                discovered = discover_pkcs11_modules()
+                if discovered:
+                    config["detected_providers"] = {
+                        "available": discovered,
+                        "auto_selected": discovered[0] if discovered else None
+                    }
+                    logger.info(f"Auto-detected PKCS#11 providers: {discovered}")
+            except Exception as e:
+                logger.warning(f"Failed to auto-detect PKCS#11 providers: {e}")
+        
+        logger.debug(f"Loaded hardware_identity config: enabled={config['enabled']}, "
+                    f"provider={config['provider']}, token_label={config['token_label']}, "
+                    f"exclude_apps={config['exclude_apps']}")
+        
+    except Exception as e:
+        logger.warning(f"Failed to parse [hardware_identity] section: {e}")
+    
+    return config
 
 
 class PKCS11Config:
