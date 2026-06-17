@@ -208,6 +208,11 @@ Yes. This module:
 
 The cryptography is handled entirely by the token. This computer just asks the token to sign things or encrypt data—it never sees the keys themselves.
 
+## For developers
+
+- **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** — Deep dive into how the module works, interception points, and design decisions
+- **[INTEGRATION.md](docs/INTEGRATION.md)** — Path for integrating hardware identity support into mainline Reticulum
+
 ## License
 
 MIT
