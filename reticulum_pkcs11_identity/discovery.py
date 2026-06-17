@@ -156,7 +156,9 @@ def _is_hardware_provider(module_path: str) -> bool:
         True if hardware provider detected, False otherwise
     """
     try:
-        lib = pkcs11.lib(module_path)
+        lib = _load_pkcs11_lib_with_path(module_path)
+        if not lib:
+            return False
     except Exception:
         return False
 
@@ -329,6 +331,39 @@ def discover_pkcs11_modules(additional_paths: list[str] | None = None) -> list[s
     return discovered
 
 
+def _load_pkcs11_lib_with_path(module_path: str):
+    """
+    Load a PKCS#11 library, adding its directory to PATH if needed.
+    
+    This handles Windows DLL dependencies by temporarily adding the module's
+    directory to PATH before loading it.
+    
+    Args:
+        module_path: Path to PKCS#11 module
+        
+    Returns:
+        Loaded pkcs11.lib object or None
+    """
+    try:
+        # Try direct load first
+        return pkcs11.lib(module_path)
+    except Exception as e:
+        # If it fails, try adding the module's directory to PATH
+        if os.name == 'nt':  # Windows
+            try:
+                module_dir = os.path.dirname(module_path)
+                old_path = os.environ.get('PATH', '')
+                os.environ['PATH'] = f"{module_dir};{old_path}"
+                try:
+                    lib = pkcs11.lib(module_path)
+                    return lib
+                finally:
+                    os.environ['PATH'] = old_path
+            except Exception:
+                pass
+        return None
+
+
 def list_tokens(module_path: str) -> list[dict]:
     """
     List all tokens available on a PKCS#11 module.
@@ -341,7 +376,9 @@ def list_tokens(module_path: str) -> list[dict]:
     """
     tokens = []
     try:
-        lib = pkcs11.lib(module_path)
+        lib = _load_pkcs11_lib_with_path(module_path)
+        if not lib:
+            return tokens
     except Exception:
         return tokens
 

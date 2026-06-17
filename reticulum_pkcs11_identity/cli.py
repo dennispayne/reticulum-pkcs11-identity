@@ -360,6 +360,121 @@ def status_command(args):
     reporter.print_status()
 
 
+def list_tokens_command(args):
+    """List available PKCS#11 tokens and their labels."""
+    try:
+        from .discovery import discover_pkcs11_modules
+        
+        print("=" * 70)
+        print("AVAILABLE PKCS#11 TOKENS")
+        print("=" * 70)
+        print()
+        
+        # Discover providers
+        providers = discover_pkcs11_modules()
+        if not providers:
+            print("[X] No PKCS#11 providers found.")
+            print()
+            print("Install one of the following:")
+            print("  Windows: https://developers.yubico.com/YubiKey/Yubico_PIV_Tool.html")
+            print("  macOS: brew install yubico-piv-tool")
+            print("  Linux: sudo apt install libykcs11 pcscd")
+            print()
+            return
+        
+        print(f"[+] Found {len(providers)} PKCS#11 provider(s)")
+        print()
+        
+        # Try each provider
+        found_any = False
+        for provider_path in providers:
+            try:
+                import pkcs11
+                
+                # Load library with PATH adjustments for Windows DLLs
+                lib = None
+                try:
+                    lib = pkcs11.lib(provider_path)
+                except Exception:
+                    # Try adding the provider's directory to PATH for Windows DLL dependencies
+                    if os.name == 'nt':
+                        provider_dir = os.path.dirname(provider_path)
+                        old_path = os.environ.get('PATH', '')
+                        os.environ['PATH'] = f"{provider_dir};{old_path}"
+                        try:
+                            lib = pkcs11.lib(provider_path)
+                        finally:
+                            os.environ['PATH'] = old_path
+                
+                if not lib:
+                    raise Exception("Could not load provider")
+                
+                slots = lib.get_slots()
+                
+                print(f"Provider: {provider_path}")
+                
+                if not slots:
+                    print("  (no slots detected)")
+                    print()
+                    continue
+                
+                print(f"  Slots: {len(slots)}")
+                
+                for slot in slots:
+                    try:
+                        token = slot.token
+                        label = (token.label if hasattr(token, 'label') else str(token)).strip()
+                        serial = token.serial_number if hasattr(token, 'serial_number') else "unknown"
+                        
+                        if label:
+                            print(f"    [Slot {slot.slot_id}] {label}")
+                            print(f"      Serial: {serial}")
+                            print(f"      Use in config: token_label = {label}")
+                            found_any = True
+                        else:
+                            print(f"    [Slot {slot.slot_id}] (empty slot)")
+                    except Exception as e:
+                        logger.debug(f"Error reading token: {e}")
+                        pass
+                
+                print()
+            except Exception as e:
+                logger.debug(f"Error querying provider {provider_path}: {e}")
+                print(f"  Error: {e}")
+                print()
+                continue
+        
+        if found_any:
+            print("=" * 70)
+            print("Example config with your token:")
+            print("=" * 70)
+            print()
+            print("[hardware_identity]")
+            print("enabled = true")
+            print("provider = libykcs11")
+            print("token_label = <use label from above>")
+            print()
+        else:
+            print("=" * 70)
+            print("[X] No tokens detected.")
+            print("=" * 70)
+            print()
+            print("Troubleshooting:")
+            print("  1. Is your YubiKey plugged in? Try unplugging and replugging")
+            print("  2. On macOS: Try 'ykman info' to verify YubiKey is recognized")
+            print("  3. On Linux: Try 'pkcs11-tool --list-slots'")
+            print("  4. Check your provider is installed (libykcs11, opensc-pkcs11, etc)")
+            print()
+        
+        print()
+        
+    except Exception as e:
+        logger.debug(f"Error in list_tokens: {e}")
+        print(f"[X] Error listing tokens: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -372,6 +487,10 @@ def main():
     # Status command
     status_parser = subparsers.add_parser("status", help="Show system status")
     status_parser.set_defaults(func=status_command)
+    
+    # List tokens command
+    list_tokens_parser = subparsers.add_parser("list-tokens", help="List available PKCS#11 tokens and their labels")
+    list_tokens_parser.set_defaults(func=list_tokens_command)
     
     # Parse arguments
     args = parser.parse_args()
