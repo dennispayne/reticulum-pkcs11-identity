@@ -28,29 +28,56 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-"""Provider and token discovery helpers for LXMF PKCS#11 identity selection."""
+"""Provider and token discovery helpers for PKCS#11 identity selection.
+
+Provides:
+  - Module discovery (libykcs11, opensc, softhsm)
+  - Token enumeration
+  - PIV slot probing (9a, 9c, 9d, 9e)
+  - Key type detection (Ed25519, X25519)
+"""
 
 from __future__ import annotations
 
 import os
 
 import pkcs11
-from pkcs11 import KeyType, ObjectClass
+from pkcs11 import Attribute, KeyType, ObjectClass
+
+# DER-encoded OID prefixes for Edwards curves
+# Ed25519 OID 1.3.101.112 → 06 03 2B 65 70
+_ED25519_OID = bytes([0x06, 0x03, 0x2B, 0x65, 0x70])
+# X25519 OID 1.3.101.110 → 06 03 2B 65 6E
+_X25519_OID = bytes([0x06, 0x03, 0x2B, 0x65, 0x6E])
+
+# PIV slot identifiers
+PIV_SLOTS = {
+    "9a": "AUTHENTICATION",
+    "9c": "SIGNATURE",
+    "9d": "KEY_MANAGEMENT",
+    "9e": "CARD_AUTHENTICATION",
+}
 
 _DEFAULT_MODULE_CANDIDATES = [
-    # SoftHSM2
+    # Windows
+    r"C:\Program Files\Yubico\Yubico PIV Tool\bin\libykcs11.dll",
+    r"C:\Program Files (x86)\Yubico\Yubico PIV Tool\bin\libykcs11.dll",
+    r"C:\Program Files\OpenSC Project\OpenSC\opensc-pkcs11.dll",
+    r"C:\Program Files (x86)\OpenSC Project\OpenSC\opensc-pkcs11.dll",
+    r"C:\Program Files\SoftHSM2\bin\softhsm2.dll",
+    # Linux - SoftHSM2
     "/usr/lib/softhsm/libsofthsm2.so",
     "/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so",
     "/usr/local/lib/softhsm/libsofthsm2.so",
-    # OpenSC (PIV on YubiKey and other smartcards)
+    # Linux - OpenSC (PIV on YubiKey and other smartcards)
     "/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so",
     "/usr/lib/opensc-pkcs11.so",
     "/usr/local/lib/opensc-pkcs11.so",
-    # Yubico PIV toolchain
+    # Linux - Yubico PIV toolchain
     "/usr/lib/x86_64-linux-gnu/libykcs11.so",
     "/usr/lib/libykcs11.so",
     "/usr/local/lib/libykcs11.so",
-    # p11-kit aggregate proxy
+    # Linux - p11-kit aggregate proxy
     "/usr/lib/x86_64-linux-gnu/pkcs11/p11-kit-client.so",
     "/usr/lib/x86_64-linux-gnu/pkcs11/p11-kit-trust.so",
     "/usr/lib/pkcs11/p11-kit-client.so",
@@ -79,6 +106,22 @@ _PROVIDER_TYPE_SORT = {
 }
 
 
+def _has_public_key(session, label: str) -> bool:
+    if not label:
+        return False
+    try:
+        session.get_key(
+            object_class=ObjectClass.PUBLIC_KEY,
+            key_type=KeyType.EC_EDWARDS,
+            label=label,
+        )
+        return True
+    except pkcs11.exceptions.NoSuchKey:
+        return False
+    except pkcs11.exceptions.MultipleObjectsReturned:
+        return True
+
+
 def _provider_hint(module_path: str) -> str:
     lower = module_path.lower()
     for needle, hint in _PROVIDER_HINTS:
@@ -95,8 +138,21 @@ def _provider_type(module_path: str) -> str:
     return "unknown"
 
 
-def discover_module_paths(additional_paths: list[str] | None = None) -> list[str]:
-    """Return existing PKCS#11 module paths from built-in and user-provided candidates."""
+# ============================================================================
+# PIV Slot Discovery Functions (New API)
+# ============================================================================
+
+
+def discover_pkcs11_modules(additional_paths: list[str] | None = None) -> list[str]:
+    """
+    Discover available PKCS#11 modules.
+
+    Args:
+        additional_paths: Extra paths to search
+
+    Returns:
+        List of available module paths
+    """
     candidates = list(_DEFAULT_MODULE_CANDIDATES)
     if additional_paths:
         candidates.extend(additional_paths)
@@ -115,20 +171,157 @@ def discover_module_paths(additional_paths: list[str] | None = None) -> list[str
     return discovered
 
 
-def _has_public_key(session, label: str) -> bool:
-    if not label:
-        return False
+def list_tokens(module_path: str) -> list[dict]:
+    """
+    List all tokens available on a PKCS#11 module.
+
+    Args:
+        module_path: Path to PKCS#11 module
+
+    Returns:
+        List of dicts with token_label, serial, slot_id
+    """
+    tokens = []
     try:
-        session.get_key(
-            object_class=ObjectClass.PUBLIC_KEY,
-            key_type=KeyType.EC_EDWARDS,
-            label=label,
-        )
-        return True
-    except pkcs11.exceptions.NoSuchKey:
+        lib = pkcs11.lib(module_path)
+    except Exception:
+        return tokens
+
+    try:
+        slots = list(lib.get_slots(token_present=True))
+    except Exception:
+        return tokens
+
+    for slot in slots:
+        try:
+            token = slot.get_token()
+            label = (getattr(token, "label", "") or "").strip()
+            serial = (getattr(token, "serial", "") or "").strip()
+            tokens.append({
+                "slot_id": slot.slot_id,
+                "token_label": label,
+                "serial": serial,
+            })
+        except Exception:
+            continue
+
+    return tokens
+
+
+def probe_piv_slots(session) -> dict:
+    """
+    Probe PIV slots (9a, 9c, 9d, 9e) for key occupancy.
+
+    Args:
+        session: PKCS#11 session object
+
+    Returns:
+        Dict mapping slot ID to occupancy info:
+        {
+            "9a": {"occupied": bool, "has_ed25519": bool, "has_x25519": bool},
+            "9c": {"occupied": bool, "has_ed25519": bool, "has_x25519": bool},
+            ...
+        }
+    """
+    slots_status = {}
+    for slot_id in PIV_SLOTS.keys():
+        slots_status[slot_id] = {
+            "occupied": False,
+            "has_ed25519": False,
+            "has_x25519": False,
+        }
+
+        # Check for Ed25519
+        if has_ed25519_key(session, slot_id):
+            slots_status[slot_id]["occupied"] = True
+            slots_status[slot_id]["has_ed25519"] = True
+
+        # Check for X25519
+        if has_x25519_key(session, slot_id):
+            slots_status[slot_id]["occupied"] = True
+            slots_status[slot_id]["has_x25519"] = True
+
+    return slots_status
+
+
+def has_ed25519_key(session, slot: str) -> bool:
+    """
+    Check if a PIV slot contains an Ed25519 key.
+
+    Args:
+        session: PKCS#11 session
+        slot: PIV slot ID (e.g., "9a", "9c")
+
+    Returns:
+        True if Ed25519 key found, False otherwise
+    """
+    if slot not in PIV_SLOTS:
         return False
-    except pkcs11.exceptions.MultipleObjectsReturned:
-        return True
+
+    try:
+        # Query for public keys with Edwards curve
+        keys = list(session.get_objects({
+            ObjectClass.PUBLIC_KEY: None,
+            KeyType.EC_EDWARDS: None,
+        }))
+
+        for key in keys:
+            try:
+                # Check if this key's EC_PARAMS contains Ed25519 OID
+                ec_params = key.get(Attribute.EC_PARAMS)
+                if ec_params and _ED25519_OID in bytes(ec_params):
+                    return True
+            except Exception:
+                continue
+
+        return False
+    except Exception:
+        return False
+
+
+def has_x25519_key(session, slot: str) -> bool:
+    """
+    Check if a PIV slot contains an X25519 key.
+
+    Args:
+        session: PKCS#11 session
+        slot: PIV slot ID (e.g., "9a", "9c")
+
+    Returns:
+        True if X25519 key found, False otherwise
+    """
+    if slot not in PIV_SLOTS:
+        return False
+
+    try:
+        # Query for public keys with Edwards curve
+        keys = list(session.get_objects({
+            ObjectClass.PUBLIC_KEY: None,
+            KeyType.EC_EDWARDS: None,
+        }))
+
+        for key in keys:
+            try:
+                # Check if this key's EC_PARAMS contains X25519 OID
+                ec_params = key.get(Attribute.EC_PARAMS)
+                if ec_params and _X25519_OID in bytes(ec_params):
+                    return True
+            except Exception:
+                continue
+
+        return False
+    except Exception:
+        return False
+
+
+# ============================================================================
+# Backward-compatible legacy functions
+# ============================================================================
+
+
+def discover_module_paths(additional_paths: list[str] | None = None) -> list[str]:
+    """Return existing PKCS#11 module paths from built-in and user-provided candidates."""
+    return discover_pkcs11_modules(additional_paths)
 
 
 def enumerate_token_inventory(
@@ -144,7 +337,7 @@ def enumerate_token_inventory(
     Returns one dict per token with provider hints and identity readiness:
       - module_path
       - provider_hint
-            - provider_type ("hardware", "software", or "unknown")
+      - provider_type ("hardware", "software", or "unknown")
       - slot_id
       - token_label
       - serial
