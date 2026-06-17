@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Pytest: All tests",
+      "name": "Pytest: All tests (SoftHSM2)",
       "type": "debugpy",
       "request": "launch",
       "module": "pytest",
@@ -12,7 +12,40 @@
       ],
       "console": "integratedTerminal",
       "justMyCode": false,
-      "envFile": "${workspaceFolder}/.vscode/.env"
+      "envFile": "${workspaceFolder}/.vscode/.env",
+      "env": {
+        "PKCS11_TEST_TOKEN": "softhsm"
+      }
+    },
+    {
+      "name": "Pytest: All tests (auto-detect)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": [
+        "tests",
+        "-v"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "envFile": "${workspaceFolder}/.vscode/.env",
+      "detail": "Default: prefers SoftHSM2, falls back to YubiKey if available and PIN set"
+    },
+    {
+      "name": "Pytest: All tests (YubiKey hardware)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": [
+        "tests",
+        "-v"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "envFile": "${workspaceFolder}/.vscode/.env",
+      "env": {
+        "PKCS11_TEST_TOKEN": "hw"
+      }
     },
     {
       "name": "Pytest: Current file",
@@ -29,13 +62,32 @@
       "envFile": "${workspaceFolder}/.vscode/.env"
     },
     {
-      "name": "Example: Soft token bootstrap",
+      "name": "Pytest: Current file (YubiKey hardware)",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/examples/example_usage.py",
+      "module": "pytest",
+      "args": [
+        "${file}",
+        "-v",
+        "-s"
+      ],
       "console": "integratedTerminal",
       "justMyCode": false,
-      "envFile": "${workspaceFolder}/.vscode/.env"
+      "envFile": "${workspaceFolder}/.vscode/.env",
+      "env": {
+        "PKCS11_TEST_TOKEN": "hw"
+      }
+    },
+    {
+      "name": "Module: Show hardware token status",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "reticulum_pkcs11_identity.cli",
+      "args": [
+        "list-tokens"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": false
     }
   ]
 }

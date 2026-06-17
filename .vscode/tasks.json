@@ -34,7 +34,7 @@
       "problemMatcher": []
     },
     {
-      "label": "Tests: Run all",
+      "label": "Tests: Run all (SoftHSM2, default)",
       "type": "shell",
       "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
       "linux": {
@@ -62,6 +62,35 @@
         "kind": "test",
         "isDefault": true
       },
+      "problemMatcher": [],
+      "detail": "Default: uses SoftHSM2. Set PKCS11_TEST_TOKEN=hw to test with YubiKey."
+    },
+    {
+      "label": "Tests: Run all (quick, no verbose)",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "linux": {
+        "command": "${workspaceFolder}/.venv/bin/python"
+      },
+      "osx": {
+        "command": "${workspaceFolder}/.venv/bin/python"
+      },
+      "windows": {
+        "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+        "args": [
+          "-m",
+          "pytest",
+          "tests",
+          "-q"
+        ]
+      },
+      "args": [
+        "-m",
+        "pytest",
+        "tests",
+        "-q"
+      ],
+      "group": "test",
       "problemMatcher": []
     },
     {
@@ -153,14 +182,95 @@
       ],
       "group": "test",
       "problemMatcher": []
+    },
+    {
+      "label": "Tests: Run with YubiKey hardware",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "linux": {
+        "command": "${workspaceFolder}/.venv/bin/python"
+      },
+      "osx": {
+        "command": "${workspaceFolder}/.venv/bin/python"
+      },
+      "windows": {
+        "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+        "args": [
+          "-m",
+          "pytest",
+          "tests",
+          "-v"
+        ],
+        "env": {
+          "PKCS11_TEST_TOKEN": "hw"
+        }
+      },
+      "args": [
+        "-m",
+        "pytest",
+        "tests",
+        "-v"
+      ],
+      "env": {
+        "PKCS11_TEST_TOKEN": "hw"
+      },
+      "group": "test",
+      "problemMatcher": [],
+      "detail": "Requires: YubiKey plugged in and PKCS11_TEST_PIN set in .vscode/.env or shell environment"
+    },
+    {
+      "label": "CLI: List available PKCS#11 tokens",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\rnidstatus",
+      "linux": {
+        "command": "${workspaceFolder}/.venv/bin/rnidstatus"
+      },
+      "osx": {
+        "command": "${workspaceFolder}/.venv/bin/rnidstatus"
+      },
+      "windows": {
+        "command": "${workspaceFolder}\\.venv\\Scripts\\rnidstatus.exe",
+        "args": [
+          "list-tokens"
+        ]
+      },
+      "args": [
+        "list-tokens"
+      ],
+      "group": "none",
+      "problemMatcher": [],
+      "detail": "Discover available YubiKey and SoftHSM2 tokens"
+    },
+    {
+      "label": "CLI: Show identity status",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\rnidstatus",
+      "linux": {
+        "command": "${workspaceFolder}/.venv/bin/rnidstatus"
+      },
+      "osx": {
+        "command": "${workspaceFolder}/.venv/bin/rnidstatus"
+      },
+      "windows": {
+        "command": "${workspaceFolder}\\.venv\\Scripts\\rnidstatus.exe",
+        "args": [
+          "show"
+        ]
+      },
+      "args": [
+        "show"
+      ],
+      "group": "none",
+      "problemMatcher": [],
+      "detail": "Display current hardware identity status"
     }
   ],
   "inputs": [
     {
       "id": "pytestNodeId",
       "type": "promptString",
-      "description": "Pytest node id (example: tests/test_softtoken.py::TestBackendECDH::test_ecdh_returns_32_bytes)",
-      "default": "tests/test_softtoken.py::TestBackendECDH"
+      "description": "Pytest node id (example: tests/test_backend.py::TestBackendECDH::test_ecdh_returns_32_bytes)",
+      "default": "tests/test_backend.py::TestBackendECDH"
     }
   ]
 }
