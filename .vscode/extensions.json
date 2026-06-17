@@ -2,7 +2,6 @@
   "recommendations": [
     "ms-python.python",
     "ms-python.vscode-pylance",
-    "ryanluker.vscode-coverage-gutters",
-    "littlefoxteam.vscode-python-test-adapter"
+    "ryanluker.vscode-coverage-gutters"
   ]
 }
