@@ -60,20 +60,25 @@ When your app needs to sign a message or create an identity, this module interce
 ### Step 2: Configure
 
 1. Plug in your hardware token (YubiKey, smartcard, etc.)
-2. Open `~/.config/reticulum/config` in a text editor
-3. Add this section (or update it if it exists):
+2. Locate your Reticulum config file:
+   - **Windows:** `C:\Users\YourUsername\.config\reticulum\config`
+   - **macOS/Linux:** `~/.config/reticulum/config`
+   
+3. If the file or directory doesn't exist, create them. In a text editor, open the config file and add:
    ```
    [hardware_identity]
    enabled = true
    ```
-   
+    
 That's it. The module auto-detects your hardware token.
 
-**Optional:** If you have multiple tokens connected, you can specify which one:
+**Optional:** If you have multiple tokens or want to specify a particular provider:
 ```
 [hardware_identity]
 enabled = true
-provider = libykcs11
+provider = libykcs11              # Leave blank to auto-detect
+token_label = YubiKey PIV #12345  # Optional: specify which token
+pin_env = MY_TOKEN_PIN            # Optional: read PIN from env var instead of prompting
 ```
 
 ### Step 3: Use your apps
