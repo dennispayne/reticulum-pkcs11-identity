@@ -81,11 +81,13 @@ provider = libykcs11
 Just run your Reticulum apps normally. The module intercepts identity creation and routes it to your hardware token automatically.
 
 **To check the status:**
-```
-python -m reticulum_pkcs11_identity status
+```bash
+rnidstatus
 ```
 
-This shows which identities are using hardware and which are still using files.
+This command works just like `rnstatus` or `rnsd`—it shows which identities are using hardware and which are still using files.
+
+(Or use: `python -m reticulum_pkcs11_identity status`)
 
 ## How do I know it's working?
 
@@ -93,7 +95,7 @@ When you first run an app with hardware backing enabled:
 1. The token prompts you for its PIN (this is normal)
 2. The app creates your identity on the token (happens once per app)
 3. Future runs don't need the PIN again (token caches it)
-4. The `status` command shows your app using hardware
+4. The `rnidstatus` command shows your app using hardware
 
 If something goes wrong, you'll see clear error messages. The module is designed to be transparent—if hardware is unavailable or disabled, apps fall back to using local identity files (no data loss, nothing breaks).
 
@@ -109,7 +111,7 @@ If you plug in a different hardware token on the same machine:
 
 **Token not detected:**
 - Make sure it's plugged in
-- Try: `python -m reticulum_pkcs11_identity status`
+- Try: `rnidstatus`
 - If still not working, you may need to install the token's drivers (e.g., Yubico PIV Tool for YubiKey)
 
 **PIN prompts too often:**

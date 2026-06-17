@@ -37,6 +37,9 @@ test = [
 #                 choco install softhsm2 (Windows)
 #                 brew install softhsm (macOS)
 
+[project.scripts]
+rnidstatus = "reticulum_pkcs11_identity.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/dennispayne/reticulum-pkcs11-identity"
 Issues = "https://github.com/dennispayne/reticulum-pkcs11-identity/issues"
