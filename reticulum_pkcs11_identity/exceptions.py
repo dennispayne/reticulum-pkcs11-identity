@@ -57,3 +57,23 @@ class PKCS11KeyNotFoundError(PKCS11IdentityError):
 class PKCS11ConfigError(PKCS11IdentityError):
     """Raised when the PKCS#11 configuration is missing or invalid."""
     pass
+
+
+class SlotNotFoundError(PKCS11IdentityError):
+    """Raised when the requested PIV slot is not found or unavailable."""
+    pass
+
+
+class SlotAlreadyOccupiedError(PKCS11IdentityError):
+    """Raised when trying to allocate a slot that is already in use."""
+    pass
+
+
+class AppNotMappedError(PKCS11IdentityError):
+    """Raised when an app has no mapping to a PIV slot."""
+    pass
+
+
+class PKCS11ProviderNotFoundError(PKCS11IdentityError):
+    """Raised when no PKCS#11 provider module can be found."""
+    pass
