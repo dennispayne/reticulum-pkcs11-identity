@@ -245,10 +245,12 @@ def _auto_initialize() -> None:
                     provider = detected.get("auto_selected")
             
             if provider:
+                # Create backend - requires either token_label or slot_id
+                # If neither configured, use a default slot
+                token_label = config.get("token_label")
                 backend = PKCS11Backend(
-                    library_path=provider,
-                    slot_id=None,  # Will be auto-detected
-                    pin=None,  # Will be prompted or from env
+                    module_path=provider,
+                    token_label=token_label,
                 )
                 _auto_initialized_backend = backend
                 
