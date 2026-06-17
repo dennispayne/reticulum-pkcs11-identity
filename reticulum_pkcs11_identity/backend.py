@@ -43,6 +43,7 @@ Design goals:
 """
 
 import getpass
+import os
 import threading
 from enum import Enum
 
@@ -57,6 +58,47 @@ from .exceptions import (
     PKCS11SessionError,
 )
 
+def _load_pkcs11_lib_with_windows_fix(module_path: str):
+    """
+    Load PKCS#11 library with Windows DLL dependency handling.
+    
+    On Windows, libykcs11.dll depends on libykpiv.dll, libcrypto-3-x64.dll, etc.
+    These must be in PATH when loading. This function:
+    1. Resolves provider names (e.g. "libykcs11") to full paths
+    2. Temporarily adds the provider's directory to PATH
+    3. Loads the library
+    
+    On other platforms, just calls pkcs11.lib() directly.
+    """
+    # If module_path is just a name like "libykcs11", try to find the actual file
+    if not os.path.exists(module_path) and os.path.sep not in module_path and '.' not in os.path.basename(module_path):
+        # Try to find it in common locations
+        candidates = [
+            r"C:\Program Files\Yubico\Yubico PIV Tool\bin\libykcs11.dll",
+            r"C:\Program Files (x86)\Yubico\Yubico PIV Tool\bin\libykcs11.dll",
+            r"C:\Program Files\OpenSC Project\OpenSC\opensc-pkcs11.dll",
+            r"C:\Program Files (x86)\OpenSC Project\OpenSC\opensc-pkcs11.dll",
+            r"C:\Program Files\SoftHSM2\bin\softhsm2.dll",
+        ]
+        
+        for candidate in candidates:
+            if os.path.exists(candidate):
+                module_path = candidate
+                break
+    
+    # On Windows, add provider directory to PATH for DLL dependency resolution
+    if os.name == 'nt':
+        provider_dir = os.path.dirname(os.path.abspath(module_path))
+        original_path = os.environ.get('PATH', '')
+        try:
+            os.environ['PATH'] = f"{provider_dir};{original_path}"
+            return pkcs11.lib(module_path)
+        finally:
+            os.environ['PATH'] = original_path
+    else:
+        return pkcs11.lib(module_path)
+
+
 # DER-encoded OID prefix for Edwards (Ed25519) and Montgomery (X25519) curves.
 # Ed25519 OID 1.3.101.112 → 06 03 2B 65 70
 _ED25519_PARAMS = bytes([0x06, 0x03, 0x2B, 0x65, 0x70])
@@ -65,6 +107,8 @@ _X25519_PARAMS  = bytes([0x06, 0x03, 0x2B, 0x65, 0x6E])
 
 # DER EC_POINT prefix used by PKCS#11 for 32-byte curve keys: 04 20
 _EC_POINT_PREFIX = bytes([0x04, 0x20])
+
+
 
 
 class SessionLifecycle(str, Enum):
@@ -119,7 +163,7 @@ class PKCS11Backend:
             raise PKCS11BackendError("Either token_label or slot_id must be specified")
 
         try:
-            self._lib = pkcs11.lib(module_path)
+            self._lib = _load_pkcs11_lib_with_windows_fix(module_path)
         except Exception as exc:
             raise PKCS11BackendError(f"Failed to load PKCS#11 module '{module_path}': {exc}") from exc
 
