@@ -12,6 +12,7 @@
       ],
       "console": "integratedTerminal",
       "justMyCode": false,
+      "subProcess": false,
       "envFile": "${workspaceFolder}/.vscode/.env",
       "env": {
         "PKCS11_TEST_TOKEN": "softhsm"
@@ -28,6 +29,7 @@
       ],
       "console": "integratedTerminal",
       "justMyCode": false,
+      "subProcess": false,
       "envFile": "${workspaceFolder}/.vscode/.env",
       "detail": "Default: prefers SoftHSM2, falls back to YubiKey if available and PIN set"
     },
@@ -42,6 +44,7 @@
       ],
       "console": "integratedTerminal",
       "justMyCode": false,
+      "subProcess": false,
       "envFile": "${workspaceFolder}/.vscode/.env",
       "env": {
         "PKCS11_TEST_TOKEN": "hw"
@@ -59,6 +62,7 @@
       ],
       "console": "integratedTerminal",
       "justMyCode": false,
+      "subProcess": false,
       "envFile": "${workspaceFolder}/.vscode/.env"
     },
     {
@@ -73,6 +77,7 @@
       ],
       "console": "integratedTerminal",
       "justMyCode": false,
+      "subProcess": false,
       "envFile": "${workspaceFolder}/.vscode/.env",
       "env": {
         "PKCS11_TEST_TOKEN": "hw"

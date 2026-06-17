@@ -148,22 +148,39 @@ def _spawn_peer(config: dict, tmp_path, tag: str) -> subprocess.Popen:
     child_env["PYTHONPATH"] = repo_root + os.pathsep + child_env.get("PYTHONPATH", "")
     if config["identity"].get("softhsm2_conf"):
         child_env["SOFTHSM2_CONF"] = config["identity"]["softhsm2_conf"]
-    return subprocess.Popen(
+    # Redirect child output to files rather than pipes. A peer can emit a fair
+    # amount of RNS logging on stderr, and the parent only drains it *after*
+    # the exchange completes; with pipes that would deadlock once the OS pipe
+    # buffer (~64 KB on Windows) fills and the child blocks on write. Files
+    # have no such limit.
+    out_fh = open(tmp_path / f"{tag}_stdout.log", "w")
+    err_fh = open(tmp_path / f"{tag}_stderr.log", "w")
+    proc = subprocess.Popen(
         [sys.executable, PEER_SCRIPT, str(cfg_path)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=out_fh,
+        stderr=err_fh,
         env=child_env,
         text=True,
     )
+    # Stash handles + paths so _drain can close them and read the output back.
+    proc._e2e_capture = (out_fh, err_fh,
+                         tmp_path / f"{tag}_stdout.log",
+                         tmp_path / f"{tag}_stderr.log")
+    return proc
 
 
 def _drain(proc: subprocess.Popen, timeout: int) -> tuple[int, str, str]:
     try:
-        out, err = proc.communicate(timeout=timeout)
+        proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         proc.kill()
-        out, err = proc.communicate()
-    return proc.returncode, out or "", err or ""
+        proc.wait()
+    out_fh, err_fh, out_path, err_path = proc._e2e_capture
+    out_fh.close()
+    err_fh.close()
+    out = out_path.read_text(errors="replace")
+    err = err_path.read_text(errors="replace")
+    return proc.returncode, out, err
 
 
 @pytest.mark.skipif(not HAS_RNS, reason="RNS not installed")
