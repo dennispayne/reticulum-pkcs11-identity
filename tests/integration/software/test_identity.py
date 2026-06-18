@@ -160,7 +160,7 @@ class TestMakeAppHardwareIdentityClass:
         # Hash should be computed
         assert identity.hash is not None
         assert identity.hexhash is not None
-        assert len(identity.hash) == 20  # RNS uses 20-byte truncated hash
+        assert len(identity.hash) == 16  # RNS uses a 16-byte (128-bit) truncated hash
 
     @pytest.mark.backend
     def test_make_app_hardware_identity_class_repr(self, pkcs11_backend):
@@ -241,7 +241,7 @@ class TestCreateAppHardwareIdentity:
             # Create backend and open session
             backend = PKCS11Backend(
                 module_path=softhsm2_module_path,
-                token_label="TestToken",
+                token_label="RNS-Test-Token",
             )
             backend.open_session(pin="1234")
             
@@ -294,7 +294,7 @@ class TestGetAppIdentityKeys:
             # Create backend and open session
             backend = PKCS11Backend(
                 module_path=softhsm2_module_path,
-                token_label="TestToken",
+                token_label="RNS-Test-Token",
             )
             backend.open_session(pin="1234")
             
@@ -337,7 +337,7 @@ class TestGetAppIdentityKeys:
             # Create backend and open session
             backend = PKCS11Backend(
                 module_path=softhsm2_module_path,
-                token_label="TestToken",
+                token_label="RNS-Test-Token",
             )
             backend.open_session(pin="1234")
             
@@ -378,9 +378,7 @@ class TestBackwardCompatibility:
 
         # Create app identity (new way)
         app_name = "test_app_compat"
-        ed_pub, x_pub = pkcs11_backend.ensure_keys_for_app(
-            app_name, SIGN_KEY_LABEL, ENC_KEY_LABEL
-        )
+        ed_pub, x_pub = pkcs11_backend.ensure_keys_for_app(app_name)
 
         app_cls = make_app_hardware_identity_class(
             app_name=app_name,

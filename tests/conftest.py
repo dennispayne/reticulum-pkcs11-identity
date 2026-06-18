@@ -295,10 +295,18 @@ def softhsm2_env(tmp_path_factory):
     yield env
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 def pkcs11_backend(request):
     """
     An opened, logged-in PKCS#11 backend pointing at the test token.
+
+    Function-scoped on purpose: several tests legitimately call
+    ``open_session()``/``close()`` on the backend they are handed. If this
+    fixture were session-scoped, one test closing the backend would break the
+    shared session for every test that ran afterwards (a "PKCS#11 session is
+    not open" cascade). The *token* (and its generated keys) is still
+    session-scoped via ``softhsm2_env``, so per-test backends are cheap and the
+    keys persist on the token across tests.
 
     Token selection is determined by PKCS11_TEST_TOKEN environment variable:
       - 'hw': Use real hardware (YubiKey) - requires PKCS11_TEST_PIN
@@ -370,7 +378,7 @@ def pkcs11_backend(request):
 
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 def hardware_identity_class(pkcs11_backend):
     """The HardwareIdentity class bound to the test token."""
     from reticulum_pkcs11_identity.identity import make_hardware_identity_class
@@ -381,7 +389,7 @@ def hardware_identity_class(pkcs11_backend):
     )
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 def hardware_identity(hardware_identity_class):
     """A single HardwareIdentity instance for the test session."""
     return hardware_identity_class(create_keys=True)

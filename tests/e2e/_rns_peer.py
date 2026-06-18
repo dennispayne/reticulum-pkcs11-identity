@@ -46,6 +46,12 @@ def _log(msg: str) -> None:
     print(f"[peer:{os.getpid()}] {msg}", file=sys.stderr, flush=True)
 
 
+# One-byte tags prefixed to each application packet sent over the link.
+MSG_ECHO = b"\x01"   # link-level echo request; the payload is echoed verbatim
+MSG_APP = b"\x02"    # ciphertext encrypted to the SERVER's identity (real msg)
+MSG_DECOY = b"\x03"  # ciphertext encrypted to the CLIENT's own identity (decoy)
+
+
 def _write_config(cfg: dict) -> None:
     """Write an isolated Reticulum config file into the peer's configdir."""
     configdir = cfg["configdir"]
@@ -131,7 +137,15 @@ def _run_server(cfg: dict, identity, result: dict) -> None:
     expected = bytes.fromhex(cfg["payload"])
     deadline = time.time() + cfg["timeout"]
 
-    state = {"remote_identity_hash": None, "received": None, "echoed": False}
+    state = {
+        "remote_identity_hash": None,
+        "received": None,
+        "echoed": False,
+        "app_plaintext": None,    # decrypted app-layer message addressed to us
+        "app_seen": False,
+        "decoy_recovered": None,  # plaintext IF we wrongly decrypt the decoy
+        "decoy_seen": False,
+    }
     done = threading.Event()
 
     destination = RNS.Destination(
@@ -143,22 +157,48 @@ def _run_server(cfg: dict, identity, result: dict) -> None:
     )
     destination.set_proof_strategy(RNS.Destination.PROVE_ALL)
 
-    def on_packet(message, packet):
-        _log(f"server received {len(message)} bytes over link")
-        state["received"] = message
-        try:
-            RNS.Packet(packet.link, message).send()  # echo back
-            state["echoed"] = True
-        except Exception as exc:  # pragma: no cover - defensive
-            _log(f"server echo failed: {exc}")
-        if state["remote_identity_hash"] is not None:
+    def _maybe_done():
+        if (state["remote_identity_hash"] is not None
+                and state["received"] is not None
+                and state["app_seen"]
+                and state["decoy_seen"]):
             done.set()
+
+    def on_packet(message, packet):
+        if not message:
+            return
+        tag, body = message[:1], message[1:]
+        if tag == MSG_ECHO:
+            _log(f"server received echo request ({len(body)} bytes)")
+            state["received"] = body
+            try:
+                RNS.Packet(packet.link, body).send()  # echo the payload back
+                state["echoed"] = True
+            except Exception as exc:  # pragma: no cover - defensive
+                _log(f"server echo failed: {exc}")
+        elif tag == MSG_APP:
+            # An application-layer message encrypted to OUR identity's public
+            # key. For the softhsm provider the X25519 ECDH required to decrypt
+            # it runs inside the PKCS#11 token (the identity holds no private
+            # key in memory), so a successful decrypt proves the token key
+            # secured this user traffic.
+            state["app_plaintext"] = identity.decrypt(body)
+            state["app_seen"] = True
+            _log(f"server decrypted app message -> {state['app_plaintext']!r}")
+        elif tag == MSG_DECOY:
+            # A message encrypted to a DIFFERENT identity (the client's own).
+            # We must NOT be able to recover it; decrypt() returns None.
+            state["decoy_recovered"] = identity.decrypt(body)
+            state["decoy_seen"] = True
+            _log(f"server decoy decrypt -> {state['decoy_recovered']!r}")
+        else:  # pragma: no cover - defensive
+            _log(f"server: ignoring unknown message tag {tag!r}")
+        _maybe_done()
 
     def on_remote_identified(link, remote_identity):
         state["remote_identity_hash"] = remote_identity.hash.hex()
         _log(f"server: remote identified as {state['remote_identity_hash']}")
-        if state["received"] is not None:
-            done.set()
+        _maybe_done()
 
     def on_link(link):
         _log("server: inbound link established")
@@ -187,6 +227,14 @@ def _run_server(cfg: dict, identity, result: dict) -> None:
     )
     result["remote_identity_hash"] = state["remote_identity_hash"]
     result["echoed"] = state["echoed"]
+    # Application-layer messaging outcomes (proof of real user-app traffic):
+    result["app_message_decrypted"] = (
+        state["app_plaintext"].hex() if state["app_plaintext"] else None
+    )
+    result["decoy_recovered"] = (
+        state["decoy_recovered"].hex() if state["decoy_recovered"] else None
+    )
+    result["decoy_decryptable"] = state["decoy_recovered"] is not None
 
 
 def _run_client(cfg: dict, identity, result: dict) -> None:
@@ -224,6 +272,9 @@ def _run_client(cfg: dict, identity, result: dict) -> None:
         *aspects,
     )
 
+    app_message = bytes.fromhex(cfg["app_message"])
+    decoy_message = bytes.fromhex(cfg["decoy_message"])
+
     echo = {"data": None}
     link_state = {"active": False}
     echo_event = threading.Event()
@@ -238,7 +289,19 @@ def _run_client(cfg: dict, identity, result: dict) -> None:
             echo_event.set()
 
         link.set_packet_callback(on_echo)
-        RNS.Packet(link, payload).send()
+
+        # Real application-layer traffic, end-to-end encrypted with RNS
+        # identity public-key encryption (a layer ABOVE the link's own
+        # transport encryption):
+        #   * a genuine message addressed to the SERVER's identity, which the
+        #     server must be able to decrypt and read;
+        #   * a decoy addressed to OUR OWN identity, which the server must NOT
+        #     be able to decrypt (it is not the intended recipient).
+        RNS.Packet(link, MSG_APP + server_identity.encrypt(app_message)).send()
+        RNS.Packet(link, MSG_DECOY + identity.encrypt(decoy_message)).send()
+        # Echo request is sent LAST; its round-trip confirms the two messages
+        # above were delivered (link packets keep send order over loopback).
+        RNS.Packet(link, MSG_ECHO + payload).send()
 
     link = RNS.Link(destination, established_callback=on_link_established)
 
@@ -249,6 +312,7 @@ def _run_client(cfg: dict, identity, result: dict) -> None:
     result["link_established"] = link_state["active"]
     result["echo_received"] = echo_event.is_set()
     result["echo_matches"] = echo["data"] == payload
+    result["app_message_sent"] = app_message.hex()
     result["ok"] = bool(link_state["active"] and echo["data"] == payload)
     try:
         link.teardown()
@@ -270,6 +334,23 @@ def main() -> int:
 
         reticulum = RNS.Reticulum(cfg["configdir"])
         identity, backend = _build_identity(cfg)
+
+        # Record provenance so the parent can verify the identity is genuinely
+        # what the variant claims (e.g. token-backed for softhsm, not a silent
+        # software fallback). These are assurances, not behaviour.
+        result["identity_provider"] = cfg["identity"]["provider"]
+        result["is_hardware"] = bool(getattr(identity, "_is_local_hardware", False))
+        result["public_key_hex"] = identity.get_public_key().hex()
+        # Provenance: prove WHICH code produced this identity object, and that
+        # it holds no private key in memory. A software/filesystem identity is
+        # a stock ``RNS.Identity`` carrying prv_bytes/sig_prv_bytes; a token
+        # identity is our package's class and exposes no private key material.
+        result["identity_class"] = type(identity).__name__
+        result["identity_module"] = type(identity).__module__
+        result["has_in_memory_private_key"] = bool(
+            getattr(identity, "prv_bytes", None)
+            or getattr(identity, "sig_prv_bytes", None)
+        )
 
         if cfg["role"] == "server":
             _run_server(cfg, identity, result)

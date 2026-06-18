@@ -1,7 +1,11 @@
 {
-  "python.defaultInterpreterPath": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+  // No hardcoded interpreter path: this repo is developed on both Windows and
+  // WSL/Linux, where the venv binary differs (.venv\Scripts\python.exe vs
+  // .venv/bin/python) and VS Code settings cannot vary per-OS. The Python
+  // extension auto-detects the workspace .venv on either OS; the interpreter a
+  // developer selects is stored per-machine, not in this committed file.
   "python.analysis.extraPaths": [
-    "${workspaceFolder}\\src"
+    "${workspaceFolder}/src"
   ],
   "python.testing.pytestEnabled": true,
   "python.testing.unittestEnabled": false,
@@ -11,7 +15,7 @@
     "-v"
   ],
   "python.testing.cwd": "${workspaceFolder}",
-  "python.envFile": "${workspaceFolder}\\.vscode\\.env",
+  "python.envFile": "${workspaceFolder}/.vscode/.env",
   "python.terminal.activateEnvironment": true,
   "python.terminal.useEnvFile": true,
   "[python]": {

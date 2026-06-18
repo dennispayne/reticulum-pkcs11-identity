@@ -295,6 +295,8 @@ class PKCS11Backend:
                 return bytes(prv.sign(data, mechanism=Mechanism.EDDSA))
             try:
                 return self._execute_with_recovery(_do_sign)
+            except PKCS11KeyNotFoundError:
+                raise
             except Exception as exc:
                 raise PKCS11BackendError(f"Signing failed: {exc}") from exc
 
@@ -353,6 +355,8 @@ class PKCS11Backend:
                 return bytes(derived[Attribute.VALUE])
             try:
                 return self._execute_with_recovery(_do_derive)
+            except PKCS11KeyNotFoundError:
+                raise
             except Exception as exc:
                 raise PKCS11BackendError(f"ECDH derivation failed: {exc}") from exc
 
@@ -469,6 +473,56 @@ class PKCS11Backend:
                 )
             except Exception as exc:
                 raise PKCS11BackendError(f"X25519 key generation failed: {exc}") from exc
+
+    def get_public_key(self, key_label: str | None = None) -> bytes:
+        """
+        Get the raw 32-byte public key for ``key_label``.
+
+        Convenience alias for :meth:`get_public_key_bytes` that mirrors the
+        PIV backend API used by the multi-app provisioning helpers.
+
+        :param key_label: PKCS#11 ``CKA_LABEL`` of the public key.
+        :returns: Raw 32-byte public key.
+        :raises PKCS11KeyNotFoundError: if the key is not found.
+        """
+        return self.get_public_key_bytes(key_label=key_label)
+
+    def ensure_keys_for_app(
+        self,
+        app_name: str,
+        slot: str | None = None,
+    ) -> tuple[bytes, bytes]:
+        """
+        Ensure Ed25519 and X25519 keys exist for a multi-app identity.
+
+        If either key is missing it is generated on the token. Keys are
+        labelled per app for isolation (``"{app_name}-sign"`` for the Ed25519
+        signing key and ``"{app_name}-enc"`` for the X25519 encryption key).
+
+        :param app_name: Application identifier used for key labelling.
+        :param slot: PIV slot hint (informational only for this backend).
+        :returns: ``(ed25519_public_key_raw, x25519_public_key_raw)``.
+        :raises PKCS11BackendError: if key generation fails.
+        :raises PKCS11KeyNotFoundError: if keys cannot be retrieved after
+            generation.
+        """
+        ed_label = f"{app_name}-sign"
+        enc_label = f"{app_name}-enc"
+
+        with self._lock:
+            try:
+                ed_pub = self.get_public_key_bytes(key_label=ed_label)
+            except PKCS11KeyNotFoundError:
+                self.generate_ed25519_keypair(label=ed_label)
+                ed_pub = self.get_public_key_bytes(key_label=ed_label)
+
+            try:
+                enc_pub = self.get_public_key_bytes(key_label=enc_label)
+            except PKCS11KeyNotFoundError:
+                self.generate_x25519_keypair(label=enc_label)
+                enc_pub = self.get_public_key_bytes(key_label=enc_label)
+
+            return (ed_pub, enc_pub)
 
     # ------------------------------------------------------------------
     # Internal helpers

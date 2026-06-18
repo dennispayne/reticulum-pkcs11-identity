@@ -16,6 +16,7 @@ from reticulum_pkcs11_identity.backend_piv import PKCS11PIVBackend
 from reticulum_pkcs11_identity.exceptions import (
     PKCS11BackendError,
     PKCS11KeyNotFoundError,
+    PKCS11SessionError,
 )
 
 
@@ -165,8 +166,13 @@ class TestKeyProvisioningPersistence:
         assert len(ed_priv_keys) > 0, "Private key should exist"
         ed_priv = ed_priv_keys[0]
         
-        # Check that key is not extractable
-        extractable = ed_priv.get(Attribute.EXTRACTABLE, default=None)
+        # Check that key is not extractable. Some tokens (e.g. SoftHSM2) refuse
+        # to expose CKA_EXTRACTABLE on a sensitive private key and raise instead
+        # of returning a value; treat that as "not reportable" and skip the check.
+        try:
+            extractable = ed_priv[Attribute.EXTRACTABLE]
+        except Exception:
+            extractable = None
         if extractable is not None:
             assert extractable is False, "Ed25519 private key should not be extractable"
         
@@ -265,7 +271,7 @@ class TestKeyProvisioningErrorHandling:
         )
         
         # Try without opening session
-        with pytest.raises(PKCS11BackendError, match="No active session"):
+        with pytest.raises(PKCS11SessionError, match="No active session"):
             backend.ensure_keys_for_app("test-app")
         
         if old_conf is not None:
@@ -332,7 +338,7 @@ class TestKeyProvisioningIntegration:
         import os
         peer_public = os.urandom(32)
         
-        shared_secret = pkcs11_backend.ecdh_derive(x_label, peer_public)
+        shared_secret = pkcs11_backend.ecdh_derive(peer_public, key_label=x_label)
         
         assert shared_secret is not None, "Should be able to derive shared secret"
         assert len(shared_secret) == 32, "Shared secret should be 32 bytes"
