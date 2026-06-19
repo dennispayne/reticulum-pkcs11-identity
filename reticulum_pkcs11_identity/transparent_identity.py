@@ -11,7 +11,6 @@ If hardware isn't available, gracefully falls back to software identity.
 No exceptions, no drama.
 """
 
-import os
 from typing import Optional
 
 from .app_identity import AppIdentityMapper
@@ -76,8 +75,14 @@ class TransparentHardwareIdentityFactory:
                 # No provider found - that's OK, we'll use software
                 return False
 
-            # Initialize backend
-            self.backend = PKCS11PIVBackend(provider_path=provider, pin=pin)
+            # Initialize backend. PKCS11PIVBackend locates the token by label
+            # (or slot id) and authenticates with the PIN at session-open time;
+            # if no token label is known the constructor raises and we fall
+            # back to software below.
+            self.backend = PKCS11PIVBackend(
+                provider,
+                token_label=self.config.get_token_label(),
+            )
 
             # Get or allocate slot
             self.slot = self.mapper.get_app_slot(self.app_name)
@@ -88,8 +93,8 @@ class TransparentHardwareIdentityFactory:
             if not self.slot:
                 return False
 
-            # Verify we can open a session
-            session = self.backend.open_session(self.slot)
+            # Verify we can authenticate and open a session with the PIN.
+            self.backend.open_session(pin)
 
             # All good - hardware is available
             self._hardware_available = True
@@ -115,11 +120,11 @@ class TransparentHardwareIdentityFactory:
             return None
 
         try:
-            session = self.backend.open_session(self.slot)
-            ed_pub = self.backend.get_public_key(session, "sign")
-            x_pub = self.backend.get_public_key(session, "enc")
+            self.backend.open_session()
+            ed_pub = self.backend.get_public_key(key_label=f"{self.app_name}-sign")
+            x_pub = self.backend.get_public_key(key_label=f"{self.app_name}-enc")
             return (ed_pub, x_pub)
-        except:
+        except Exception:
             return None
 
     def sign(self, message: bytes) -> Optional[bytes]:
@@ -133,9 +138,9 @@ class TransparentHardwareIdentityFactory:
             return None
 
         try:
-            session = self.backend.open_session(self.slot)
-            return self.backend.sign(session, message)
-        except:
+            self.backend.open_session()
+            return self.backend.sign(message, key_label=f"{self.app_name}-sign")
+        except Exception:
             return None
 
     def ecdh_public_key(self) -> Optional[bytes]:
@@ -149,9 +154,9 @@ class TransparentHardwareIdentityFactory:
             return None
 
         try:
-            session = self.backend.open_session(self.slot)
-            return self.backend.get_public_key(session, "enc")
-        except:
+            self.backend.open_session()
+            return self.backend.get_public_key(key_label=f"{self.app_name}-enc")
+        except Exception:
             return None
 
 

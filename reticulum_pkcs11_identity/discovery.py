@@ -268,7 +268,6 @@ def select_provider(
     """
     hardware = categorized.get("hardware", [])
     software = categorized.get("software", [])
-    unknown = categorized.get("unknown", [])
 
     if len(hardware) == 1:
         provider = hardware[0]
@@ -347,7 +346,7 @@ def _load_pkcs11_lib_with_path(module_path: str):
     try:
         # Try direct load first
         return pkcs11.lib(module_path)
-    except Exception as e:
+    except Exception:
         # If it fails, try adding the module's directory to PATH
         if os.name == 'nt':  # Windows
             try:

@@ -46,7 +46,7 @@ from typing import Optional, Dict, Tuple, Any
 
 import pkcs11
 
-from .exceptions import PKCS11BackendError, PKCS11SessionError
+from .exceptions import PKCS11BackendError
 
 logger = logging.getLogger(__name__)
 

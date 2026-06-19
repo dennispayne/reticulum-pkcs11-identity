@@ -14,10 +14,9 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional
 
 from .exceptions import (
-    AppNotMappedError,
     SlotAlreadyOccupiedError,
     SlotNotFoundError,
     PKCS11ConfigError,
@@ -179,7 +178,17 @@ class AppIdentityMapper:
                     try:
                         # Extract app name from filepath for logging
                         app_name = os.path.basename(filepath).replace('.identity', '')
-                        self.save_mapping(filepath, slot, app_name)
+                        # Persist the discovered mapping (mirrors allocate_slot_for_app).
+                        self._mapping[filepath] = {
+                            "slot": slot,
+                            "app_name": app_name,
+                            "created": int(time.time()),
+                        }
+                        if slot not in self._slot_apps:
+                            self._slot_apps[slot] = []
+                        if app_name not in self._slot_apps[slot]:
+                            self._slot_apps[slot].append(app_name)
+                        self._save_mapping()
                         logger.info(f"Cached cross-node discovery: {filepath} → {slot}")
                     except Exception as e:
                         logger.warning(f"Could not cache discovered mapping: {e}")

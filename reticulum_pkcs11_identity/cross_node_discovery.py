@@ -15,11 +15,8 @@ This module provides:
 3. Automatic mapping caching on discovery
 """
 
-import os
 import logging
 from typing import Optional, Tuple, Dict, Any
-
-from RNS.Cryptography import Ed25519PublicKey, X25519PublicKey
 
 from .exceptions import PKCS11BackendError, PKCS11KeyNotFoundError
 

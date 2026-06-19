@@ -18,7 +18,6 @@ enable_hardware_identity_injection() is still available for explicit control.
 
 import logging
 import os
-import sys
 import inspect
 from typing import Optional
 

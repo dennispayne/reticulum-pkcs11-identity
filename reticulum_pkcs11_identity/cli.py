@@ -13,7 +13,6 @@ import logging
 import os
 import sys
 import subprocess
-from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any, Set
 
 try:
@@ -23,7 +22,7 @@ except ImportError:
 
 from .app_identity import AppIdentityMapper, PIV_SLOTS, PIV_SLOT_NAMES
 from .config import load_hardware_identity_config
-from .discovery import enumerate_token_inventory, probe_piv_slots
+from .discovery import enumerate_token_inventory
 
 
 logger = logging.getLogger(__name__)
@@ -246,11 +245,12 @@ class StatusReporter:
             # Try to enumerate tokens
             inventory = enumerate_token_inventory([provider])
             
-            # Find matching token by label
-            for token_info in inventory.get("tokens", []):
-                if token_info.get("label") == token_label:
+            # Find matching token by label. enumerate_token_inventory returns a
+            # list of per-token dicts (keys: token_label, serial, slot_id, ...).
+            for token_info in inventory:
+                if token_info.get("token_label") == token_label:
                     return {
-                        "label": token_info.get("label"),
+                        "label": token_info.get("token_label"),
                         "serial": token_info.get("serial"),
                         "slots_available": len(PIV_SLOTS),
                     }
@@ -421,18 +421,16 @@ def list_tokens_command(args):
                 print(f"  Slots: {len(slots)}")
                 
                 # First try to get token labels
-                found_token = False
                 for slot in slots:
                     try:
                         token = slot.get_token()
                         label = (token.label if hasattr(token, 'label') else str(token)).strip()
-                        serial = token.serial_number if hasattr(token, 'serial_number') else "unknown"
+                        serial = getattr(token, 'serial', None) or "unknown"
                         
                         if label:
                             print(f"    [Slot {slot.slot_id}] Token: {label}")
                             print(f"      Serial: {serial}")
                             print(f"      Use in config: token_label = {label}")
-                            found_token = True
                             found_any = True
                         else:
                             print(f"    [Slot {slot.slot_id}] (token present but no label)")

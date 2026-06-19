@@ -290,7 +290,7 @@ class PKCS11PIVBackend:
         self,
         label: str,
         key_id: bytes | None = None,
-    ) -> tuple[bytes, bytes]:
+    ) -> tuple[bytes, None]:
         """
         Generate Ed25519 keypair on token (stores private key).
 
@@ -305,7 +305,7 @@ class PKCS11PIVBackend:
             session = self._require_session()
 
             try:
-                pub, priv = session.generate_keypair(
+                pub, _ = session.generate_keypair(
                     KeyType.EC_EDWARDS,
                     mechanism=Mechanism.EC_EDWARDS_KEY_PAIR_GEN,
                     public_template={
@@ -334,7 +334,7 @@ class PKCS11PIVBackend:
         self,
         label: str,
         key_id: bytes | None = None,
-    ) -> tuple[bytes, bytes]:
+    ) -> tuple[bytes, None]:
         """
         Generate X25519 keypair on token (stores private key).
 
@@ -349,7 +349,7 @@ class PKCS11PIVBackend:
             session = self._require_session()
 
             try:
-                pub, priv = session.generate_keypair(
+                pub, _ = session.generate_keypair(
                     KeyType.EC_EDWARDS,
                     mechanism=Mechanism.EC_EDWARDS_KEY_PAIR_GEN,
                     public_template={

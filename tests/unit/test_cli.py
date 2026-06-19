@@ -308,7 +308,7 @@ class TestStatusReporterExtras:
             "detected_providers": {},
         }
         reporter = _reporter(cfg)
-        inv = {"tokens": [{"label": "MyToken", "serial": "ABC123"}]}
+        inv = [{"token_label": "MyToken", "serial": "ABC123"}]
         with patch("reticulum_pkcs11_identity.cli.enumerate_token_inventory", return_value=inv):
             info = reporter._query_token_info()
         assert info["serial"] == "ABC123"
@@ -323,7 +323,7 @@ class TestStatusReporterExtras:
             "detected_providers": {},
         }
         reporter = _reporter(cfg)
-        inv = {"tokens": [{"label": "Other", "serial": "X"}]}
+        inv = [{"token_label": "Other", "serial": "X"}]
         with patch("reticulum_pkcs11_identity.cli.enumerate_token_inventory", return_value=inv):
             assert reporter._query_token_info() is None
 

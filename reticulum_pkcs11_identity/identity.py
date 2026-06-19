@@ -327,7 +327,7 @@ def make_lxmf_identity_class(
             Only the **public** key is written; the private key always stays in
             the token and is never written to disk.
             """
-            return self.pub_to_file(path)
+            return bool(self.pub_to_file(path))
 
         def get_private_key(self):
             """
@@ -717,7 +717,7 @@ def make_app_hardware_identity_class(
             Only the **public** key is written; the private key always stays in
             the token and is never written to disk.
             """
-            return self.pub_to_file(path)
+            return bool(self.pub_to_file(path))
 
         def get_private_key(self):
             """

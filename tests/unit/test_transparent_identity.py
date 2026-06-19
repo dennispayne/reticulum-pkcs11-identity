@@ -5,7 +5,7 @@ Tests for transparent hardware identity (zero-config).
 import tempfile
 import os
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, create_autospec, patch
 
 import reticulum_pkcs11_identity.transparent_identity as ti
 from reticulum_pkcs11_identity.transparent_identity import (
@@ -175,7 +175,11 @@ class TestHardwareOperations:
     def _ready_factory(self):
         factory = _make_factory()
         factory._hardware_available = True
-        factory.backend = MagicMock()
+        # autospec so calls are validated against the real PKCS11PIVBackend
+        # signatures. A plain MagicMock silently accepts any arguments, which is
+        # how an earlier API-misuse bug (wrong positional args to sign/
+        # get_public_key/open_session) went unnoticed.
+        factory.backend = create_autospec(ti.PKCS11PIVBackend, instance=True)
         factory.slot = "9a"
         return factory
 

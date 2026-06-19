@@ -9,7 +9,7 @@ import configparser
 import logging
 import os
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 
 from .exceptions import PKCS11ConfigError
 

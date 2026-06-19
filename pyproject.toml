@@ -31,6 +31,12 @@ test = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
 ]
+# Developer tooling. Pyright is the type checker the committed [tool.pyright]
+# config targets (Pylance bundles the same engine in-editor); installing it
+# here makes the configured baseline reproducible from the command line.
+dev = [
+    "pyright>=1.1.400",
+]
 # System dependencies for full test suite (not installable via pip):
 # - SoftHSM2: softhsm2-util and libsofthsm2.so (required for PKCS#11 tests)
 #   Install with: apt-get install softhsm2 (Linux)
@@ -97,3 +103,41 @@ exclude_lines = [
 
 [tool.coverage.html]
 directory = "htmlcov"
+
+[tool.pyright]
+# Type-checking baseline for this package. This file pins the policy so the
+# Problems view is consistent for every contributor regardless of their
+# personal `python.analysis.typeCheckingMode` setting.
+#
+# Rationale for "standard" rather than "strict": this package is a thin wrapper
+# around two libraries that ship little or no type information — Reticulum (RNS,
+# untyped) and python-pkcs11 (partial types). In strict mode ~84% of the
+# diagnostics were `reportUnknown*` / `reportMissingParameterType` noise emitted
+# purely because those third-party calls are untyped, which drowns out real
+# findings. "standard" keeps the high-signal type checks while dropping that
+# noise.
+include = ["reticulum_pkcs11_identity"]
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "standard"
+
+# Opt back in to dead-code detection (off by default in "standard"). These are
+# high-signal and low-false-positive, so they stay as errors.
+reportUnusedImport = "error"
+reportUnusedVariable = "error"
+
+# python-pkcs11 exposes its crypto operations (sign / derive_key / the
+# Attribute-keyed templates) through mixin classes and dynamic attributes that
+# its shipped types do not describe, and RNS ships no types at all. Attribute-
+# and argument-type inference across those boundaries is therefore unreliable
+# and produces mostly false positives. The genuine defects these rules surfaced
+# have been fixed in code; `reportCallIssue` and `reportReturnType` (which had
+# no false positives here and caught real bugs) remain enabled.
+reportAttributeAccessIssue = "none"
+reportArgumentType = "none"
+# RNS.Identity is effectively untyped, so structural override checks against it
+# are not meaningful.
+reportIncompatibleMethodOverride = "none"
+# tabulate / psutil are optional runtime deps imported under try/except
+# ImportError; their stubs ship without source, which is expected here.
+reportMissingModuleSource = "none"
