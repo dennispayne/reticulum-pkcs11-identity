@@ -5,8 +5,11 @@ Tests verify PIV slot awareness, session management, and key operations
 specific to PIV tokens (YubiKey, etc.).
 """
 
+import threading
 import pytest
 import unittest.mock as mock
+
+import pkcs11
 
 from reticulum_pkcs11_identity.backend_piv import (
     PKCS11PIVBackend,
@@ -15,7 +18,38 @@ from reticulum_pkcs11_identity.backend_piv import (
     _ec_point_to_raw,
     _raw_to_ec_point,
 )
-from reticulum_pkcs11_identity.exceptions import PKCS11BackendError
+from reticulum_pkcs11_identity.exceptions import (
+    PKCS11BackendError,
+    PKCS11KeyNotFoundError,
+    PKCS11LoginError,
+    PKCS11SessionError,
+    SlotNotFoundError,
+)
+
+
+def _make_backend_with_session(session=None, state=SessionLifecycle.ACTIVE_SESSION):
+    """Create a bare PIVBackend wired with a (mock) session for method tests."""
+    backend = PKCS11PIVBackend.__new__(PKCS11PIVBackend)
+    backend._lock = threading.RLock()
+    backend._session = session if session is not None else mock.MagicMock()
+    backend._state = state
+    backend._pin = "123456"
+    backend._slot_id = None
+    backend._token_label = None
+    backend._bound_token = None
+    backend._lib = mock.MagicMock()
+    return backend
+
+
+def _fake_pub_key(raw=b"\xAB" * 32):
+    """Return a mock public-key object indexable by Attribute.EC_POINT."""
+    from pkcs11 import Attribute
+
+    obj = mock.MagicMock()
+    obj.__getitem__.side_effect = lambda attr: (
+        b"\x04\x20" + raw if attr == Attribute.EC_POINT else None
+    )
+    return obj
 
 
 @pytest.mark.backend_piv
@@ -245,3 +279,359 @@ class TestPIVBackendThreadSafety:
         backend._lock = threading.RLock()
         assert hasattr(backend, "_lock")
         assert isinstance(backend._lock, type(threading.RLock()))
+
+
+@pytest.mark.backend_piv
+@pytest.mark.backend
+class TestPIVBackendOpenSession:
+    """Test open_session authentication paths."""
+
+    def _backend_with_token(self, token):
+        backend = _make_backend_with_session(state=SessionLifecycle.NO_SESSION)
+        backend._session = None
+        backend._find_token = mock.MagicMock(return_value=token)
+        return backend
+
+    def test_open_session_already_active_returns_early(self):
+        backend = _make_backend_with_session(state=SessionLifecycle.ACTIVE_SESSION)
+        backend._find_token = mock.MagicMock()
+        backend.open_session("123456")
+        backend._find_token.assert_not_called()
+
+    def test_open_session_success(self):
+        token = mock.MagicMock()
+        token.label = "YubiKey"
+        token.serial = b"123"
+        session = mock.MagicMock()
+        token.open.return_value = session
+        backend = self._backend_with_token(token)
+
+        backend.open_session("999999")
+
+        assert backend._state == SessionLifecycle.ACTIVE_SESSION
+        assert backend._session is session
+        assert backend._pin == "999999"
+        token.open.assert_called_once_with(rw=True, user_pin="999999")
+
+    def test_open_session_default_pin(self):
+        token = mock.MagicMock()
+        token.label = "YubiKey"
+        token.serial = b"123"
+        token.open.return_value = mock.MagicMock()
+        backend = self._backend_with_token(token)
+
+        backend.open_session()
+
+        assert backend._pin == "123456"
+
+    def test_open_session_pin_locked(self):
+        token = mock.MagicMock()
+        token.open.side_effect = pkcs11.exceptions.PinLocked()
+        backend = self._backend_with_token(token)
+
+        with pytest.raises(PKCS11LoginError, match="PIN is locked"):
+            backend.open_session("123456")
+        assert backend._state == SessionLifecycle.SESSION_LOST
+
+    def test_open_session_pin_incorrect(self):
+        token = mock.MagicMock()
+        token.open.side_effect = pkcs11.exceptions.PinIncorrect()
+        backend = self._backend_with_token(token)
+
+        with pytest.raises(PKCS11LoginError, match="Incorrect PIN"):
+            backend.open_session("000000")
+
+    def test_open_session_generic_auth_failure(self):
+        token = mock.MagicMock()
+        token.open.side_effect = RuntimeError("boom")
+        backend = self._backend_with_token(token)
+
+        with pytest.raises(PKCS11LoginError, match="Failed to authenticate"):
+            backend.open_session("123456")
+
+
+@pytest.mark.backend_piv
+@pytest.mark.backend
+class TestPIVBackendFindToken:
+    """Test _find_token slot/label resolution."""
+
+    def _make(self, slots, slot_id=None, token_label=None):
+        backend = PKCS11PIVBackend.__new__(PKCS11PIVBackend)
+        backend._lock = threading.RLock()
+        backend._slot_id = slot_id
+        backend._token_label = token_label
+        backend._lib = mock.MagicMock()
+        backend._lib.get_slots.return_value = slots
+        return backend
+
+    def test_find_token_by_label(self):
+        token = mock.MagicMock()
+        token.label = "YubiKey"
+        slot = mock.MagicMock()
+        slot.slot_id = 0
+        slot.get_token.return_value = token
+        backend = self._make([slot], token_label="YubiKey")
+
+        assert backend._find_token() is token
+
+    def test_find_token_label_mismatch_raises(self):
+        token = mock.MagicMock()
+        token.label = "OtherKey"
+        slot = mock.MagicMock()
+        slot.slot_id = 0
+        slot.get_token.return_value = token
+        backend = self._make([slot], token_label="YubiKey")
+
+        with pytest.raises(SlotNotFoundError):
+            backend._find_token()
+
+    def test_find_token_slot_id_filter(self):
+        token = mock.MagicMock()
+        token.label = "YubiKey"
+        slot0 = mock.MagicMock()
+        slot0.slot_id = 0
+        slot1 = mock.MagicMock()
+        slot1.slot_id = 1
+        slot1.get_token.return_value = token
+        backend = self._make([slot0, slot1], slot_id=1)
+
+        assert backend._find_token() is token
+        slot0.get_token.assert_not_called()
+
+    def test_find_token_skips_broken_slot(self):
+        bad_slot = mock.MagicMock()
+        bad_slot.slot_id = 0
+        bad_slot.get_token.side_effect = RuntimeError("dead")
+        good_token = mock.MagicMock()
+        good_token.label = "YubiKey"
+        good_slot = mock.MagicMock()
+        good_slot.slot_id = 1
+        good_slot.get_token.return_value = good_token
+        backend = self._make([bad_slot, good_slot])
+
+        assert backend._find_token() is good_token
+
+    def test_find_token_enumerate_failure(self):
+        backend = PKCS11PIVBackend.__new__(PKCS11PIVBackend)
+        backend._lock = threading.RLock()
+        backend._slot_id = None
+        backend._token_label = None
+        backend._lib = mock.MagicMock()
+        backend._lib.get_slots.side_effect = RuntimeError("usb error")
+
+        with pytest.raises(PKCS11SessionError, match="Failed to enumerate slots"):
+            backend._find_token()
+
+    def test_find_token_none_present(self):
+        backend = self._make([])
+        with pytest.raises(SlotNotFoundError):
+            backend._find_token()
+
+
+@pytest.mark.backend_piv
+@pytest.mark.backend
+class TestPIVBackendRequireSession:
+    """Test _require_session and recovery."""
+
+    def test_require_session_active(self):
+        session = mock.MagicMock()
+        backend = _make_backend_with_session(session=session)
+        assert backend._require_session() is session
+
+    def test_require_session_no_session_raises(self):
+        backend = _make_backend_with_session(state=SessionLifecycle.NO_SESSION)
+        backend._session = None
+        with pytest.raises(PKCS11SessionError, match="No active session"):
+            backend._require_session()
+
+    def test_require_session_recovers_on_loss(self):
+        backend = _make_backend_with_session(state=SessionLifecycle.SESSION_LOST)
+        backend._session = None
+        recovered = mock.MagicMock()
+
+        def fake_open(pin):
+            backend._session = recovered
+            backend._state = SessionLifecycle.ACTIVE_SESSION
+
+        backend.open_session = mock.MagicMock(side_effect=fake_open)
+        assert backend._require_session() is recovered
+        backend.open_session.assert_called_once_with("123456")
+
+
+@pytest.mark.backend_piv
+@pytest.mark.backend
+class TestPIVBackendSign:
+    """Test sign()."""
+
+    def test_sign_success(self):
+        session = mock.MagicMock()
+        session.get_objects.return_value = [mock.MagicMock()]
+        session.sign.return_value = b"signature"
+        backend = _make_backend_with_session(session=session)
+
+        result = backend.sign(b"msg", key_label="app-sign")
+
+        assert result == b"signature"
+        session.sign.assert_called_once()
+
+    def test_sign_key_not_found(self):
+        session = mock.MagicMock()
+        session.get_objects.return_value = []
+        backend = _make_backend_with_session(session=session)
+
+        with pytest.raises(PKCS11KeyNotFoundError, match="Ed25519 key not found"):
+            backend.sign(b"msg", key_label="missing")
+
+    def test_sign_wraps_errors(self):
+        session = mock.MagicMock()
+        session.get_objects.return_value = [mock.MagicMock()]
+        session.sign.side_effect = RuntimeError("hw fault")
+        backend = _make_backend_with_session(session=session)
+
+        with pytest.raises(PKCS11BackendError, match="Sign operation failed"):
+            backend.sign(b"msg", key_label="app-sign")
+
+
+@pytest.mark.backend_piv
+@pytest.mark.backend
+class TestPIVBackendGetPublicKey:
+    """Test get_public_key()."""
+
+    def test_get_public_key_success(self):
+        session = mock.MagicMock()
+        session.get_objects.return_value = [_fake_pub_key(b"\x11" * 32)]
+        backend = _make_backend_with_session(session=session)
+
+        result = backend.get_public_key(key_label="app-sign")
+        assert result == b"\x11" * 32
+
+    def test_get_public_key_not_found(self):
+        session = mock.MagicMock()
+        session.get_objects.return_value = []
+        backend = _make_backend_with_session(session=session)
+
+        with pytest.raises(PKCS11KeyNotFoundError, match="Public key not found"):
+            backend.get_public_key(key_label="missing")
+
+    def test_get_public_key_wraps_errors(self):
+        session = mock.MagicMock()
+        session.get_objects.side_effect = RuntimeError("read fault")
+        backend = _make_backend_with_session(session=session)
+
+        with pytest.raises(PKCS11BackendError, match="Key retrieval failed"):
+            backend.get_public_key(key_label="app-sign")
+
+
+@pytest.mark.backend_piv
+@pytest.mark.backend
+class TestPIVBackendKeyGen:
+    """Test generate_ed25519_keypair / generate_x25519_keypair."""
+
+    def test_generate_ed25519_success(self):
+        session = mock.MagicMock()
+        pub = _fake_pub_key(b"\x22" * 32)
+        session.generate_keypair.return_value = (pub, mock.MagicMock())
+        backend = _make_backend_with_session(session=session)
+
+        pub_bytes, priv = backend.generate_ed25519_keypair("app-sign")
+        assert pub_bytes == b"\x22" * 32
+        assert priv is None
+
+    def test_generate_ed25519_failure(self):
+        session = mock.MagicMock()
+        session.generate_keypair.side_effect = RuntimeError("gen fail")
+        backend = _make_backend_with_session(session=session)
+
+        with pytest.raises(PKCS11BackendError, match="Ed25519 key generation failed"):
+            backend.generate_ed25519_keypair("app-sign")
+
+    def test_generate_x25519_success(self):
+        session = mock.MagicMock()
+        pub = _fake_pub_key(b"\x33" * 32)
+        session.generate_keypair.return_value = (pub, mock.MagicMock())
+        backend = _make_backend_with_session(session=session)
+
+        pub_bytes, priv = backend.generate_x25519_keypair("app-enc", key_id=b"id")
+        assert pub_bytes == b"\x33" * 32
+        assert priv is None
+
+    def test_generate_x25519_failure(self):
+        session = mock.MagicMock()
+        session.generate_keypair.side_effect = RuntimeError("gen fail")
+        backend = _make_backend_with_session(session=session)
+
+        with pytest.raises(PKCS11BackendError, match="X25519 key generation failed"):
+            backend.generate_x25519_keypair("app-enc")
+
+
+@pytest.mark.backend_piv
+@pytest.mark.backend
+class TestPIVBackendEcdhDerive:
+    """Test ecdh_derive()."""
+
+    def test_ecdh_derive_key_not_found(self):
+        session = mock.MagicMock()
+        session.get_objects.return_value = []
+        backend = _make_backend_with_session(session=session)
+
+        with pytest.raises(PKCS11KeyNotFoundError, match="ECDH key not found"):
+            backend.ecdh_derive("missing", b"\x55" * 32)
+
+    def test_ecdh_derive_wraps_errors(self):
+        session = mock.MagicMock()
+        session.get_objects.return_value = [mock.MagicMock()]
+        session.derive_key.side_effect = RuntimeError("derive fault")
+        backend = _make_backend_with_session(session=session)
+
+        with pytest.raises(PKCS11BackendError, match="ECDH derivation failed"):
+            backend.ecdh_derive("app-enc", b"\x55" * 32)
+
+
+@pytest.mark.backend_piv
+@pytest.mark.backend
+class TestPIVBackendEnsureKeysForApp:
+    """Test ensure_keys_for_app()."""
+
+    def test_keys_already_exist(self):
+        # Lookup order: ed-priv, x-priv, ed-pub, x-pub
+        session = mock.MagicMock()
+        priv = mock.MagicMock()
+        ed_pub = _fake_pub_key(b"\x66" * 32)
+        x_pub = _fake_pub_key(b"\x77" * 32)
+        session.get_objects.side_effect = [[priv], [priv], [ed_pub], [x_pub]]
+        backend = _make_backend_with_session(session=session)
+
+        ed_bytes, x_bytes = backend.ensure_keys_for_app("myapp")
+        assert ed_bytes == b"\x66" * 32
+        assert x_bytes == b"\x77" * 32
+        session.generate_keypair.assert_not_called()
+
+    def test_keys_generated_when_missing(self):
+        # ed-priv empty, x-priv empty -> generate both, then ed-pub, x-pub
+        session = mock.MagicMock()
+        ed_pub = _fake_pub_key(b"\x66" * 32)
+        x_pub = _fake_pub_key(b"\x77" * 32)
+        session.get_objects.side_effect = [[], [], [ed_pub], [x_pub]]
+        backend = _make_backend_with_session(session=session)
+
+        ed_bytes, x_bytes = backend.ensure_keys_for_app("myapp")
+        assert ed_bytes == b"\x66" * 32
+        assert x_bytes == b"\x77" * 32
+        assert session.generate_keypair.call_count == 2
+
+    def test_public_key_missing_after_generation(self):
+        # ed-priv empty, x-priv empty -> generate, then ed-pub empty -> raise
+        session = mock.MagicMock()
+        session.get_objects.side_effect = [[], [], []]
+        backend = _make_backend_with_session(session=session)
+
+        with pytest.raises(PKCS11KeyNotFoundError, match="not found after generation"):
+            backend.ensure_keys_for_app("myapp")
+
+    def test_ensure_keys_wraps_errors(self):
+        session = mock.MagicMock()
+        session.get_objects.side_effect = RuntimeError("token fault")
+        backend = _make_backend_with_session(session=session)
+
+        with pytest.raises(PKCS11BackendError):
+            backend.ensure_keys_for_app("myapp")

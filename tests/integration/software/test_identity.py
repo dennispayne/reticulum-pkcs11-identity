@@ -83,6 +83,38 @@ class TestMakeLXMFIdentityClass:
         assert identity._is_local_hardware is True
 
     @pytest.mark.backend
+    def test_lxmf_identity_can_generate_delivery_proofs(self, pkcs11_backend):
+        """A token-backed identity must be able to generate RNS delivery proofs.
+
+        ``RNS.Packet.prove`` only proves a packet when ``identity.prv`` is
+        truthy, and ``RNS.Identity.prove`` produces the proof via
+        ``identity.sign()`` (which routes to the token). So ``prv`` must be
+        truthy while ``prv_bytes`` stays ``None`` (no in-memory private key),
+        and a signature over a packet hash must validate against the identity's
+        own public key — exactly what proof generation does internally.
+        """
+        from tests.conftest import SIGN_KEY_LABEL, ENC_KEY_LABEL
+
+        cls = make_lxmf_identity_class(
+            backend=pkcs11_backend,
+            sign_key_label=SIGN_KEY_LABEL,
+            enc_key_label=ENC_KEY_LABEL,
+        )
+        identity = cls(create_keys=True)
+
+        # Gate that RNS.Packet.prove checks before generating a proof.
+        assert bool(identity.prv) is True
+        # ...but no private key material is held in memory.
+        assert identity.prv_bytes is None
+        assert identity.sig_prv_bytes is None
+
+        # The proof itself: sign a stand-in packet hash on the token and verify
+        # it validates against the identity's published signing public key.
+        packet_hash = RNS.Identity.full_hash(b"voice-radio delivery proof")
+        signature = identity.sign(packet_hash)
+        assert identity.validate(signature, packet_hash) is True
+
+    @pytest.mark.backend
     def test_make_hardware_identity_class_alias(self, pkcs11_backend):
         """Test backward-compatible alias make_hardware_identity_class."""
         from tests.conftest import SIGN_KEY_LABEL, ENC_KEY_LABEL

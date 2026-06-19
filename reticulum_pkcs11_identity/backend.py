@@ -192,8 +192,13 @@ class PKCS11Backend:
         :returns: TokenMonitor instance
         """
         if self._token_monitor is None:
-            from .token_monitor import TokenMonitor
-            self._token_monitor = TokenMonitor(self)
+            # Double-checked locking: two threads (e.g. an announce-sign and a
+            # packet-decrypt) can reach this lazily on first use at once. Guard
+            # creation with the backend lock so they share one monitor instance.
+            with self._lock:
+                if self._token_monitor is None:
+                    from .token_monitor import TokenMonitor
+                    self._token_monitor = TokenMonitor(self)
         return self._token_monitor
 
     # ------------------------------------------------------------------

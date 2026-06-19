@@ -9,6 +9,23 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from reticulum_pkcs11_identity.cli import StatusReporter
+import reticulum_pkcs11_identity.cli as cli
+
+
+def _reporter(config=None, mapper=True):
+    """Build a StatusReporter with a mocked config (and optional mapper)."""
+    cfg = config or {
+        "enabled": False,
+        "provider": None,
+        "token_label": None,
+        "exclude_apps": [],
+        "detected_providers": {},
+    }
+    with patch("reticulum_pkcs11_identity.cli.load_hardware_identity_config", return_value=cfg):
+        if mapper:
+            with patch("reticulum_pkcs11_identity.cli.AppIdentityMapper"):
+                return StatusReporter()
+        return StatusReporter()
 
 
 class TestStatusReporter:
@@ -257,3 +274,192 @@ enabled = false
                 assert "Enabled" in output
                 assert "[+] Yes" in output
                 assert "Provider" in output
+
+
+class TestStatusReporterExtras:
+    """Cover remaining StatusReporter branches."""
+
+    def test_detect_running_apps_subprocess(self):
+        reporter = _reporter()
+        reporter.running_apps = set()
+        fake = MagicMock()
+        fake.stdout = "some sideband process here"
+        with patch("reticulum_pkcs11_identity.cli.sys.platform", "linux"), \
+             patch("reticulum_pkcs11_identity.cli.subprocess.run", return_value=fake):
+            reporter._detect_running_apps_subprocess()
+        assert "sideband" in reporter.running_apps
+
+    def test_detect_running_apps_subprocess_error(self):
+        reporter = _reporter()
+        with patch("reticulum_pkcs11_identity.cli.subprocess.run",
+                   side_effect=RuntimeError("no ps")):
+            reporter._detect_running_apps_subprocess()  # should not raise
+
+    def test_query_token_info_no_provider(self):
+        reporter = _reporter()
+        assert reporter._query_token_info() is None
+
+    def test_query_token_info_match(self):
+        cfg = {
+            "enabled": True,
+            "provider": "/lib/p11.so",
+            "token_label": "MyToken",
+            "exclude_apps": [],
+            "detected_providers": {},
+        }
+        reporter = _reporter(cfg)
+        inv = {"tokens": [{"label": "MyToken", "serial": "ABC123"}]}
+        with patch("reticulum_pkcs11_identity.cli.enumerate_token_inventory", return_value=inv):
+            info = reporter._query_token_info()
+        assert info["serial"] == "ABC123"
+        assert info["label"] == "MyToken"
+
+    def test_query_token_info_no_match(self):
+        cfg = {
+            "enabled": True,
+            "provider": "/lib/p11.so",
+            "token_label": "MyToken",
+            "exclude_apps": [],
+            "detected_providers": {},
+        }
+        reporter = _reporter(cfg)
+        inv = {"tokens": [{"label": "Other", "serial": "X"}]}
+        with patch("reticulum_pkcs11_identity.cli.enumerate_token_inventory", return_value=inv):
+            assert reporter._query_token_info() is None
+
+    def test_configuration_section_includes_token_info(self):
+        cfg = {
+            "enabled": True,
+            "provider": "/lib/p11.so",
+            "token_label": "MyToken",
+            "exclude_apps": [],
+            "detected_providers": {},
+        }
+        reporter = _reporter(cfg)
+        with patch.object(reporter, "_query_token_info",
+                          return_value={"serial": "S1", "slots_available": 4}):
+            rows = reporter.get_configuration_section()
+        assert any("Token (serial)" in str(r) and "S1" in str(r) for r in rows)
+        assert any("Slots available" in str(r) for r in rows)
+
+    def test_warnings_multiple_hardware_providers(self):
+        cfg = {
+            "enabled": True,
+            "provider": "/lib/p11.so",
+            "token_label": "T",
+            "exclude_apps": [],
+            "detected_providers": {
+                "p1": {"type": "hardware"},
+                "p2": {"type": "hardware"},
+            },
+        }
+        reporter = _reporter(cfg)
+        warnings = reporter.get_warnings_section()
+        assert any("Multiple hardware providers" in w for w in warnings)
+
+    def test_warnings_slot_conflict(self):
+        reporter = _reporter()
+        reporter.mapper = MagicMock()
+        reporter.mapper.get_slot_apps.side_effect = lambda slot: (
+            ["a", "b"] if slot == "9a" else []
+        )
+        warnings = reporter.get_warnings_section()
+        assert any("shared by multiple apps" in w for w in warnings)
+
+    def test_apps_section_with_apps(self):
+        reporter = _reporter()
+        reporter.mapper = MagicMock()
+        reporter.mapper._mapping = {"k": {"app_name": "meshchat"}}
+        reporter.mapper.is_app_excluded.return_value = False
+        reporter.mapper.get_app_slot.return_value = "9c"
+        reporter.running_apps = {"meshchat"}
+        rows = reporter.get_apps_section()
+        assert any(row[0] == "meshchat" for row in rows)
+
+
+class TestCommands:
+    """Test top-level CLI command functions."""
+
+    def test_status_command(self):
+        with patch("reticulum_pkcs11_identity.cli.StatusReporter") as SR:
+            cli.status_command(None)
+        SR.return_value.print_status.assert_called_once()
+
+    def test_list_tokens_no_providers(self, capsys):
+        with patch("reticulum_pkcs11_identity.discovery.discover_pkcs11_modules",
+                   return_value=[]):
+            cli.list_tokens_command(None)
+        out = capsys.readouterr().out
+        assert "No PKCS#11 providers found" in out
+
+    def test_list_tokens_with_token(self, capsys):
+        token = MagicMock()
+        token.label = "YubiKey PIV"
+        token.serial_number = "12345"
+        slot = MagicMock()
+        slot.slot_id = 0
+        slot.get_token.return_value = token
+        lib = MagicMock()
+        lib.get_slots.return_value = [slot]
+
+        with patch("reticulum_pkcs11_identity.discovery.discover_pkcs11_modules",
+                   return_value=["/lib/p11.so"]), \
+             patch("pkcs11.lib", return_value=lib):
+            cli.list_tokens_command(None)
+        out = capsys.readouterr().out
+        assert "YubiKey PIV" in out
+        assert "Token:" in out
+
+    def test_list_tokens_no_slots(self, capsys):
+        lib = MagicMock()
+        lib.get_slots.return_value = []
+        with patch("reticulum_pkcs11_identity.discovery.discover_pkcs11_modules",
+                   return_value=["/lib/p11.so"]), \
+             patch("pkcs11.lib", return_value=lib):
+            cli.list_tokens_command(None)
+        out = capsys.readouterr().out
+        assert "no slots detected" in out
+
+    def test_list_tokens_provider_error(self, capsys):
+        with patch("reticulum_pkcs11_identity.discovery.discover_pkcs11_modules",
+                   return_value=["/lib/p11.so"]), \
+             patch("pkcs11.lib", side_effect=Exception("load fail")):
+            cli.list_tokens_command(None)
+        out = capsys.readouterr().out
+        assert "No tokens detected" in out
+
+
+class TestMain:
+    """Test the argparse entry point."""
+
+    def test_main_status_default(self):
+        with patch.object(sys, "argv", ["rnidstatus"]), \
+             patch("reticulum_pkcs11_identity.cli.status_command") as sc:
+            cli.main()
+        sc.assert_called_once()
+
+    def test_main_list_tokens(self):
+        with patch.object(sys, "argv", ["rnidstatus", "list-tokens"]), \
+             patch("reticulum_pkcs11_identity.cli.list_tokens_command") as lt:
+            cli.main()
+        lt.assert_called_once()
+
+    def test_main_status_subcommand(self):
+        with patch.object(sys, "argv", ["rnidstatus", "status"]), \
+             patch("reticulum_pkcs11_identity.cli.status_command") as sc:
+            cli.main()
+        sc.assert_called_once()
+
+
+class TestPackageEntryPoint:
+    """Cover the ``python -m reticulum_pkcs11_identity`` entry point."""
+
+    def test_dunder_main_invokes_cli_main(self):
+        import runpy
+
+        with patch("reticulum_pkcs11_identity.cli.main") as mock_main:
+            runpy.run_module(
+                "reticulum_pkcs11_identity",
+                run_name="__main__",
+            )
+        mock_main.assert_called_once()

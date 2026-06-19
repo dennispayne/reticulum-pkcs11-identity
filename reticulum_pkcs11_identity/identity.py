@@ -87,6 +87,34 @@ class _TokenSigningKeyAdapter:
         return self._identity.sign(message)
 
 
+class _TokenResidentPrivateKey:
+    """Truthy placeholder for an X25519 private key that lives on the token.
+
+    RNS gates delivery-proof generation on ``identity.prv`` being truthy
+    (``RNS.Packet.prove``), yet ``Identity.prove`` produces the proof through
+    ``identity.sign()`` — which a hardware identity already routes to the
+    token. A hardware identity holds no in-process encryption key, so without
+    this marker ``prv`` is ``None`` and the radio can never prove receipt of a
+    packet, breaking opportunistic delivery proofs and ``PROVE_ALL`` endpoints.
+
+    The marker is only ever read for its truthiness: the actual X25519 ECDH is
+    performed on the token inside ``decrypt()``. ``prv_bytes`` deliberately
+    stays ``None`` so the identity still reports that it holds no in-memory
+    private key.
+    """
+
+    __slots__ = ()
+
+    def __bool__(self):
+        return True
+
+    def __repr__(self):
+        return "<token-resident X25519 private key>"
+
+
+_TOKEN_RESIDENT_PRV = _TokenResidentPrivateKey()
+
+
 def make_lxmf_identity_class(
     backend: PKCS11Backend,
     sign_key_label: str,
@@ -186,10 +214,17 @@ def make_lxmf_identity_class(
             # Let RNS use this identity as a *link responder*. The responder
             # path in RNS reads ``identity.sig_prv`` directly (it does not call
             # ``sign()``), so expose an adapter that yields the real public key
-            # and routes signing to the token. ``prv`` stays ``None``: link
-            # encryption uses freshly generated ephemeral X25519 keys, never the
-            # identity's static encryption key.
+            # and routes signing to the token. ``prv`` stays a token-resident
+            # marker (see below): link encryption uses freshly generated
+            # ephemeral X25519 keys, never the identity's static encryption key.
             self.sig_prv = _TokenSigningKeyAdapter(self)
+
+            # RNS only generates delivery proofs when ``identity.prv`` is truthy
+            # (``RNS.Packet.prove``); the proof itself is produced via
+            # ``sign()`` on the token. Expose a truthy marker so this radio can
+            # prove packet receipt. ``prv_bytes`` stays ``None`` — we still hold
+            # no in-memory private key.
+            self.prv = _TOKEN_RESIDENT_PRV
 
             RNS.log(
                 f"Hardware identity loaded from PKCS#11 token "
@@ -607,6 +642,11 @@ def make_app_hardware_identity_class(
             # See _TokenSigningKeyAdapter: enables this identity to accept
             # inbound RNS links (responder path reads ``sig_prv`` directly).
             self.sig_prv = _TokenSigningKeyAdapter(self)
+
+            # See _TokenResidentPrivateKey: a truthy ``prv`` lets RNS generate
+            # token-signed delivery proofs (``RNS.Packet.prove``). ``prv_bytes``
+            # stays ``None`` — no in-memory private key is held.
+            self.prv = _TOKEN_RESIDENT_PRV
 
             RNS.log(
                 f"App '{app_name}' hardware identity loaded from PKCS#11 slot {slot} "

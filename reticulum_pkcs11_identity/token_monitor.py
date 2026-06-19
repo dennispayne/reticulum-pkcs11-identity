@@ -42,7 +42,6 @@ Design:
 """
 
 import logging
-import threading
 from typing import Optional, Dict, Tuple, Any
 
 import pkcs11
@@ -75,7 +74,17 @@ class TokenMonitor:
         :param backend: PKCS11Backend instance to monitor.
         """
         self._backend = backend
-        self._lock = threading.RLock()
+        # Share the backend's reentrant lock rather than using a private one.
+        # Probing token state enters the PKCS#11 module via C_GetSlotList /
+        # C_GetTokenInfo (see get_provider_state), while the backend's crypto
+        # enters it via C_Sign / C_DeriveKey. PKCS#11 modules such as SoftHSM2
+        # are not safe against two threads being *inside the module* at once:
+        # concurrent native calls corrupt the module's heap (observed as
+        # "free(): invalid pointer" / "unaligned fastbin" -> SIGSEGV) or
+        # deadlock on an internal mutex (-> hang). A single shared lock
+        # serializes ALL native access; the RLock preserves same-thread
+        # reentrancy (detect_changes -> get_provider_state).
+        self._lock = backend._lock
         self._previous_state: Optional[Dict[str, Any]] = None
         self._on_token_change_callback = None
 
@@ -105,20 +114,24 @@ class TokenMonitor:
                 "bound_fingerprint": self._backend._bound_token_fingerprint,
             }
 
-            # Enumerate available tokens/slots
+            # Enumerate available tokens/slots. Hold the shared backend lock so
+            # this native PKCS#11 access (C_GetSlotList / C_GetTokenInfo) cannot
+            # overlap a concurrent C_Sign / C_DeriveKey running on another
+            # thread, which would corrupt the module or deadlock it.
             try:
-                slots = list(self._backend._lib.get_slots(token_present=True))
-                for slot in slots:
-                    state["slot_ids"].add(slot.slot_id)
-                    try:
-                        token = slot.get_token()
-                        serial = (getattr(token, "serial", "") or "").strip()
-                        if serial:
-                            state["token_serials"].add(serial)
-                    except pkcs11.exceptions.TokenNotPresent:
-                        pass
-                    except Exception:
-                        pass
+                with self._lock:
+                    slots = list(self._backend._lib.get_slots(token_present=True))
+                    for slot in slots:
+                        state["slot_ids"].add(slot.slot_id)
+                        try:
+                            token = slot.get_token()
+                            serial = (getattr(token, "serial", "") or "").strip()
+                            if serial:
+                                state["token_serials"].add(serial)
+                        except pkcs11.exceptions.TokenNotPresent:
+                            pass
+                        except Exception:
+                            pass
             except Exception as exc:
                 logger.debug(f"Could not enumerate slots: {exc}")
 

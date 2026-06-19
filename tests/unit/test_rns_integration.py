@@ -3,10 +3,12 @@ Tests for transparent RNS.Identity integration.
 """
 
 import os
+import sys
 import pytest
 import tempfile
 from unittest.mock import Mock, patch
 
+import reticulum_pkcs11_identity.rns_integration as rns_mod
 from reticulum_pkcs11_identity.rns_integration import (
     _detect_app_name,
     _get_hardware_keys_for_app,
@@ -17,6 +19,46 @@ from reticulum_pkcs11_identity.rns_integration import (
     _auto_initialize,
     _install_monkey_patch,
 )
+
+
+@pytest.fixture
+def reset_patch_state():
+    """Reset module-level patch globals around a test."""
+    prev_installed = rns_mod._patch_installed
+    prev_backend = rns_mod._auto_initialized_backend
+    rns_mod._patch_installed = False
+    rns_mod._auto_initialized_backend = None
+    yield
+    rns_mod._patch_installed = prev_installed
+    rns_mod._auto_initialized_backend = prev_backend
+
+
+@pytest.fixture
+def fake_rns():
+    """Install a fake RNS module with an Identity class into sys.modules."""
+    import types
+
+    rns = types.ModuleType("RNS")
+
+    class Identity:
+        def __init__(self, create_keys=True):
+            self.pub_bytes = b"sw-x"
+            self.sig_pub_bytes = b"sw-ed"
+
+        def sign(self, message):
+            return b"sw-sig:" + message
+
+    rns.Identity = Identity
+    rns.LOG_INFO = 4
+    rns.log = Mock()
+
+    prev = sys.modules.get("RNS")
+    sys.modules["RNS"] = rns
+    yield rns
+    if prev is not None:
+        sys.modules["RNS"] = prev
+    else:
+        del sys.modules["RNS"]
 
 
 class TestAppDetection:
@@ -43,15 +85,39 @@ class TestHardwareKeyRetrieval:
     """Test hardware key retrieval for apps."""
 
     def test_get_hardware_keys_unknown_app(self):
-        """Test getting keys for unknown app."""
-        # Unknown app with no mapping and no backend
+        """Unknown app with no mapping and no backend returns None."""
         keys = _get_hardware_keys_for_app("unknown_app_xyz", backend=None)
         assert keys is None
 
     def test_get_hardware_keys_no_backend(self):
-        """Test key retrieval without backend returns None."""
-        # No backend provided
+        """Key retrieval without backend returns None."""
         keys = _get_hardware_keys_for_app("any_app", backend=None)
+        assert keys is None
+
+    def test_get_hardware_keys_success(self):
+        """Backend with a mapped slot returns (ed, x) public keys."""
+        backend = Mock()
+        backend.get_public_key_bytes.side_effect = [b"ed-pub", b"x-pub"]
+        with patch.object(rns_mod, "AppIdentityMapper") as MapperCls:
+            MapperCls.return_value.get_app_slot.return_value = "9a"
+            keys = _get_hardware_keys_for_app("sideband", backend=backend)
+        assert keys == (b"ed-pub", b"x-pub")
+
+    def test_get_hardware_keys_no_slot(self):
+        """When the app has no slot mapping, returns None."""
+        backend = Mock()
+        with patch.object(rns_mod, "AppIdentityMapper") as MapperCls:
+            MapperCls.return_value.get_app_slot.return_value = None
+            keys = _get_hardware_keys_for_app("sideband", backend=backend)
+        assert keys is None
+
+    def test_get_hardware_keys_backend_error_returns_none(self):
+        """Backend errors are swallowed and return None."""
+        backend = Mock()
+        backend.get_public_key_bytes.side_effect = RuntimeError("token gone")
+        with patch.object(rns_mod, "AppIdentityMapper") as MapperCls:
+            MapperCls.return_value.get_app_slot.return_value = "9a"
+            keys = _get_hardware_keys_for_app("sideband", backend=backend)
         assert keys is None
 
 
@@ -168,6 +234,142 @@ class TestAutoInitialization:
             
             # Should have called config loading
             mock_load_config.assert_called_once()
+
+
+class TestInstallMonkeyPatch:
+    """Test _install_monkey_patch and patched RNS.Identity behavior."""
+
+    def test_install_succeeds_and_is_idempotent(self, reset_patch_state, fake_rns):
+        """Patch installs once, subsequent calls short-circuit to True."""
+        backend = Mock()
+        assert _install_monkey_patch(backend) is True
+        assert rns_mod._patch_installed is True
+        # Second call returns True without re-patching
+        assert _install_monkey_patch(backend) is True
+
+    def test_patched_init_injects_hardware_keys(self, reset_patch_state, fake_rns):
+        """When hardware keys are available, identity gets hw pubkeys + hw sign."""
+        backend = Mock()
+        backend.sign.return_value = b"hw-sig"
+        with patch.object(rns_mod, "_detect_app_name", return_value="sideband"), \
+             patch.object(rns_mod, "_get_hardware_keys_for_app",
+                          return_value=(b"ed-pub", b"x-pub")), \
+             patch.object(rns_mod, "AppIdentityMapper") as MapperCls:
+            MapperCls.return_value.get_app_slot.return_value = "9a"
+            assert _install_monkey_patch(backend) is True
+
+            ident = fake_rns.Identity()
+
+        assert ident.pub_bytes == b"x-pub"
+        assert ident.sig_pub_bytes == b"ed-pub"
+        assert is_identity_hardware_backed(ident) is True
+        assert get_identity_app_name(ident) == "sideband"
+        assert get_identity_slot(ident) == "9a"
+        assert ident.sign(b"data") == b"hw-sig"
+
+    def test_patched_hw_sign_falls_back_on_error(self, reset_patch_state, fake_rns):
+        """If hardware sign fails, falls back to software signing."""
+        backend = Mock()
+        backend.sign.side_effect = RuntimeError("token removed")
+        with patch.object(rns_mod, "_detect_app_name", return_value="sideband"), \
+             patch.object(rns_mod, "_get_hardware_keys_for_app",
+                          return_value=(b"ed-pub", b"x-pub")), \
+             patch.object(rns_mod, "AppIdentityMapper") as MapperCls:
+            MapperCls.return_value.get_app_slot.return_value = "9a"
+            _install_monkey_patch(backend)
+            ident = fake_rns.Identity()
+
+        # software fallback signature from fake RNS Identity
+        assert ident.sign(b"data") == b"sw-sig:data"
+
+    def test_patched_init_no_hardware_uses_software(self, reset_patch_state, fake_rns):
+        """Without hardware keys, identity stays software-backed."""
+        backend = Mock()
+        with patch.object(rns_mod, "_detect_app_name", return_value=None), \
+             patch.object(rns_mod, "_get_hardware_keys_for_app", return_value=None):
+            _install_monkey_patch(backend)
+            ident = fake_rns.Identity()
+
+        assert ident.pub_bytes == b"sw-x"
+        assert is_identity_hardware_backed(ident) is False
+
+
+class TestEnableInjection:
+    """Test enable_hardware_identity_injection."""
+
+    def test_enable_with_explicit_backend(self, reset_patch_state, fake_rns):
+        """Passing a backend installs the patch."""
+        backend = Mock()
+        enable_hardware_identity_injection(backend)
+        assert rns_mod._patch_installed is True
+
+    def test_enable_uses_auto_backend(self, reset_patch_state, fake_rns):
+        """Falls back to the module-level auto-initialized backend."""
+        rns_mod._auto_initialized_backend = Mock()
+        enable_hardware_identity_injection()
+        assert rns_mod._patch_installed is True
+
+    def test_enable_no_backend_logs_via_rns(self, reset_patch_state, fake_rns):
+        """No backend available -> informs via RNS.log, no patch."""
+        enable_hardware_identity_injection(None)
+        assert rns_mod._patch_installed is False
+        fake_rns.log.assert_called_once()
+
+
+class TestAutoInitializeProvider:
+    """Test _auto_initialize provider branches."""
+
+    def test_auto_initialize_installs_with_provider(self, reset_patch_state, fake_rns):
+        """Configured provider -> backend created and patch installed."""
+        with patch.object(rns_mod, "load_hardware_identity_config") as mock_cfg, \
+             patch("reticulum_pkcs11_identity.backend.PKCS11Backend") as BackendCls:
+            mock_cfg.return_value = {
+                "enabled": True,
+                "provider": "/usr/lib/softhsm.so",
+                "token_label": "RNS-Test-Token",
+                "exclude_apps": [],
+                "detected_providers": {},
+            }
+            _auto_initialize()
+
+        BackendCls.assert_called_once()
+        assert rns_mod._patch_installed is True
+
+    def test_auto_initialize_uses_auto_selected_provider(self, reset_patch_state, fake_rns):
+        """Provider auto-selected from detected_providers when not explicit."""
+        with patch.object(rns_mod, "load_hardware_identity_config") as mock_cfg, \
+             patch("reticulum_pkcs11_identity.backend.PKCS11Backend") as BackendCls:
+            mock_cfg.return_value = {
+                "enabled": True,
+                "provider": None,
+                "token_label": None,
+                "exclude_apps": [],
+                "detected_providers": {"auto_selected": "/usr/lib/softhsm.so"},
+            }
+            _auto_initialize()
+
+        BackendCls.assert_called_once()
+
+    def test_auto_initialize_backend_error_swallowed(self, reset_patch_state, fake_rns):
+        """Backend construction failure is handled gracefully."""
+        with patch.object(rns_mod, "load_hardware_identity_config") as mock_cfg, \
+             patch("reticulum_pkcs11_identity.backend.PKCS11Backend",
+                   side_effect=RuntimeError("no token")):
+            mock_cfg.return_value = {
+                "enabled": True,
+                "provider": "/usr/lib/softhsm.so",
+                "token_label": "RNS-Test-Token",
+                "exclude_apps": [],
+                "detected_providers": {},
+            }
+            _auto_initialize()  # should not raise
+        assert rns_mod._patch_installed is False
+
+    def test_auto_initialize_config_error_swallowed(self, reset_patch_state):
+        """Config loading failure is handled gracefully."""
+        with patch.object(rns_mod, "load_hardware_identity_config",
+                          side_effect=RuntimeError("bad config")):
+            _auto_initialize()  # should not raise
 
 
 if __name__ == "__main__":

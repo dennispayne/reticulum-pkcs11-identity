@@ -93,6 +93,21 @@
       ],
       "console": "integratedTerminal",
       "justMyCode": false
+    },
+    {
+      "name": "Debug: PKCS#11 thread-race repro",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "tests.e2e._stress_token_threads",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "subProcess": false,
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "STRESS_ITERS": "8000",
+        "STRESS_SECONDS": "40"
+      },
+      "detail": "Deterministic two-thread (sign||decrypt) reproduction of the SoftHSM2 e2e flake. Set breakpoints in token_monitor.get_provider_state / identity._check_token_state / backend.sign to watch both threads enter the PKCS#11 module. Crashes within seconds WITHOUT the shared-lock fix; survives WITH it."
     }
   ]
 }
