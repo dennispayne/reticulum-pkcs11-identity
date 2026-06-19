@@ -116,9 +116,10 @@ def pkcs11_backend(request):
     # SoftHSM2 fixtures are pulled in lazily, so selecting hardware does NOT
     # spuriously skip with a "SoftHSM2 is not installed" message.
     # In hw mode the shared (generative) token suite skips cleanly and never
-    # writes to the token, because YubiKey PIV cannot generate/hold the
-    # Ed25519/X25519 keys these tests create. Yields an opened, authenticated
-    # SoftHSM2 backend otherwise.
+    # writes to the token, to avoid leaving throwaway test keys on a real
+    # device. (YubiKey 5.7+ firmware *can* hold Curve25519; the skip is about
+    # not writing to your token, not capability.) Yields an opened,
+    # authenticated SoftHSM2 backend otherwise.
 ```
 
 > **Zero-skip note:** A full, zero-skip token run requires a *software*
@@ -127,8 +128,10 @@ def pkcs11_backend(request):
 > Windows build implements Ed25519/X25519 (keygen fails with
 > `MechanismInvalid`), so the generative suite skips cleanly on Windows by
 > design. Run it under WSL instead (see *WSL: the software-token environment*
-> below). A YubiKey alone cannot run the generative token suite; real hardware
-> is exercised by the dedicated tests under `tests/integration/hardware/`.
+> below). The generative token suite is skipped on a real YubiKey to avoid
+> writing throwaway keys to it (YubiKey 5.7+ does support Curve25519); real
+> hardware is exercised by the dedicated tests under
+> `tests/integration/hardware/`.
 
 ## Test layout
 

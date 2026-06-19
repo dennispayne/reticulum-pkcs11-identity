@@ -128,13 +128,20 @@ class PKCS11PIVBackend:
         Open PKCS#11 session and authenticate.
 
         Args:
-            pin: PIN for token (default: 123456 for YubiKey)
+            pin: User PIN for the token. Required on first open; provide it from
+                the caller's own secure source (config, env var, or prompt).
+                This package never defaults, hardcodes, or stores a PIN value in
+                its source.
         """
         with self._lock:
             if self._state == SessionLifecycle.ACTIVE_SESSION:
                 return
 
-            self._pin = pin or "123456"
+            if not pin:
+                raise PKCS11LoginError(
+                    "A PIN is required to open the PKCS#11 session; none was provided."
+                )
+            self._pin = pin
 
             try:
                 token = self._find_token()

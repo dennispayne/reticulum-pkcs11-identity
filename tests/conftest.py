@@ -323,21 +323,21 @@ def pkcs11_backend(request):
     backend_type = _get_test_token_backend()
 
     if backend_type == "hw":
-        # The shared token suite provisions and exercises Ed25519/X25519 keys
-        # that are *generated on the token on demand*. YubiKey PIV (via
-        # libykcs11) cannot generate or hold Curve25519 keys, so these tests
-        # cannot run against a real YubiKey. Skip cleanly and non-destructively
-        # rather than writing to / failing against the user's token.
+        # This shared suite *generates throwaway* Ed25519/X25519 keys on the
+        # token on demand. It is skipped on real hardware to avoid writing test
+        # keys to the user's token -- not because the token is incapable:
+        # YubiKey 5.7+ firmware CAN hold Curve25519 keys (only older firmware
+        # cannot generate them, which is a firmware limitation).
         #
-        # Real hardware is exercised by the dedicated, non-generative tests
-        # under tests/integration/hardware/. For a full, zero-skip token run,
-        # use a software token: install SoftHSM2 (or run under Linux/WSL) and
-        # set PKCS11_TEST_TOKEN=softhsm.
+        # Real-token validation lives in the dedicated, non-generative tests
+        # under tests/integration/hardware/. For a full, zero-skip generative
+        # run, use a software token: install SoftHSM2 (or run under Linux/WSL)
+        # and set PKCS11_TEST_TOKEN=softhsm.
         pytest.skip(
-            "Shared token suite requires a software (generative) PKCS#11 token. "
-            "YubiKey PIV cannot generate/hold the Ed25519/X25519 test keys these "
-            "tests create. Install SoftHSM2 and set PKCS11_TEST_TOKEN=softhsm for "
-            "a full run; hardware is covered by tests/integration/hardware/."
+            "Shared token suite generates throwaway keys and is skipped on real "
+            "hardware to avoid writing to your token. YubiKey 5.7+ supports "
+            "Curve25519 -- use tests/integration/hardware/ for real-token checks, "
+            "or set PKCS11_TEST_TOKEN=softhsm for the generative suite."
         )
 
     # --- SoftHSM2 (software token) ---------------------------------------

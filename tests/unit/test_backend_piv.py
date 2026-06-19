@@ -313,16 +313,16 @@ class TestPIVBackendOpenSession:
         assert backend._pin == "999999"
         token.open.assert_called_once_with(rw=True, user_pin="999999")
 
-    def test_open_session_default_pin(self):
+    def test_open_session_requires_explicit_pin(self):
+        # No PIN is ever defaulted in source; opening without one must fail.
         token = mock.MagicMock()
         token.label = "YubiKey"
         token.serial = b"123"
         token.open.return_value = mock.MagicMock()
         backend = self._backend_with_token(token)
 
-        backend.open_session()
-
-        assert backend._pin == "123456"
+        with pytest.raises(PKCS11LoginError, match="PIN is required"):
+            backend.open_session()
 
     def test_open_session_pin_locked(self):
         token = mock.MagicMock()
