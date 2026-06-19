@@ -699,8 +699,35 @@ class PKCS11Backend:
         key_label: str | None,
         key_id: bytes | None,
     ):
-        """Look up a key object on the token by label and/or id."""
-        kwargs = {"object_class": object_class, "key_type": key_type}
+        """Look up a key object on the token by label and/or id.
+
+        Vendor-neutrality: an X25519 *encryption* key is stored as
+        ``CKK_EC_MONTGOMERY`` on standards-compliant tokens but as
+        ``CKK_EC_EDWARDS`` on SoftHSM2 (and some PIV stacks) — and some
+        ``python-pkcs11`` builds do not even expose ``CKK_EC_MONTGOMERY`` as an
+        enum member. If the typed lookup misses, fall back to a type-agnostic
+        lookup by label/id (a label uniquely identifies a key), so a single code
+        path works across tokens regardless of how they classify Curve25519.
+        """
+        try:
+            return self._get_key(session, object_class, key_type, key_label, key_id)
+        except PKCS11KeyNotFoundError:
+            if key_label is None and key_id is None:
+                raise
+            return self._get_key(session, object_class, None, key_label, key_id)
+
+    def _get_key(
+        self,
+        session: pkcs11.Session,
+        object_class: ObjectClass,
+        key_type: KeyType | None,
+        key_label: str | None,
+        key_id: bytes | None,
+    ):
+        """Look up a key by object_class (+ optional key_type) and label/id."""
+        kwargs = {"object_class": object_class}
+        if key_type is not None:
+            kwargs["key_type"] = key_type
         if key_label is not None:
             kwargs["label"] = key_label
         if key_id is not None:
@@ -709,8 +736,9 @@ class PKCS11Backend:
             return session.get_key(**kwargs)
         except pkcs11.exceptions.NoSuchKey as exc:
             identifier = key_label or (key_id.hex() if key_id else "<unspecified>")
+            type_desc = key_type.name if key_type is not None else "any-type"
             raise PKCS11KeyNotFoundError(
-                f"Key '{identifier}' ({object_class.name}/{key_type.name}) not found on token"
+                f"Key '{identifier}' ({object_class.name}/{type_desc}) not found on token"
             ) from exc
         except pkcs11.exceptions.MultipleObjectsReturned as exc:
             identifier = key_label or (key_id.hex() if key_id else "<unspecified>")

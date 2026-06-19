@@ -575,3 +575,58 @@ class TestMultiAppIdentityCrypto:
         ciphertext = identity.encrypt(plaintext)
         assert ciphertext != plaintext
         assert identity.decrypt(ciphertext) == plaintext
+
+    @pytest.mark.backend_piv
+    def test_transparent_injection_binds_token_identity_roundtrip(self, pkcs11_backend):
+        """The transparent-injection binding turns a plain RNS.Identity into a
+        token-backed one: correct hash, no software private key, and working
+        token sign/verify + encrypt/decrypt. This is the end-to-end proof of the
+        rns_integration fix (the old code overwrote only public bytes, leaving a
+        software key and a mismatched hash)."""
+        import RNS
+        from reticulum_pkcs11_identity.identity import create_app_hardware_identity
+        from reticulum_pkcs11_identity.rns_integration import (
+            _bind_hardware_identity,
+            is_identity_hardware_backed,
+        )
+
+        app_name = "inject_rt_app"
+        pkcs11_backend.ensure_keys_for_app(app_name)
+        hw = create_app_hardware_identity(app_name, backend=pkcs11_backend, slot="9a")
+        assert hw is not None
+
+        # Start from an ordinary software identity, then bind the token identity.
+        ident = RNS.Identity(create_keys=True)
+        _bind_hardware_identity(ident, hw, app_name)
+
+        # Destination hash now matches the advertised hardware public keys.
+        assert ident.pub_bytes == hw.pub_bytes
+        assert ident.sig_pub_bytes == hw.sig_pub_bytes
+        assert ident.hash == hw.hash
+        assert is_identity_hardware_backed(ident)
+        # No in-memory private key is retained.
+        assert ident.prv_bytes is None
+        assert ident.sig_prv_bytes is None
+
+        # Token-backed sign/verify round-trip.
+        message = b"injected token signature round-trip"
+        signature = ident.sign(message)
+        assert ident.validate(signature, message) is True
+
+        # Token-backed encrypt/decrypt round-trip.
+        plaintext = b"injected token ciphertext round-trip"
+        ciphertext = ident.encrypt(plaintext)
+        assert ident.decrypt(ciphertext) == plaintext
+
+    def test_factory_rejects_non_conforming_backend(self):
+        """A backend lacking the PKCS11Backend interface (e.g. the YubiKey-PIV
+        helper backend) is rejected with a clear error rather than crashing with
+        a cryptic AttributeError deep inside key loading."""
+        class FakePIVBackend:
+            def sign(self, *args, **kwargs):
+                return b""
+
+        with pytest.raises(PKCS11BackendError, match="must implement the PKCS11Backend"):
+            make_app_hardware_identity_class(
+                "guarded_app", backend=FakePIVBackend(), slot="9a"
+            )

@@ -61,7 +61,7 @@ def discover_providers(additional_paths: list[str] | None = None) -> list[str]:
         # Normalize path
         try:
             normalized = str(Path(path).resolve())
-        except:
+        except Exception:
             normalized = path
 
         if normalized in seen:

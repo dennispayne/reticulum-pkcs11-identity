@@ -247,40 +247,58 @@ class TestInstallMonkeyPatch:
         # Second call returns True without re-patching
         assert _install_monkey_patch(backend) is True
 
-    def test_patched_init_injects_hardware_keys(self, reset_patch_state, fake_rns):
-        """When hardware keys are available, identity gets hw pubkeys + hw sign."""
+    def test_patched_init_adopts_hardware_identity(self, reset_patch_state, fake_rns):
+        """When a token identity is available, the RNS identity adopts its public
+        keys, hash and token-backed sign/decrypt — with no software private key."""
         backend = Mock()
-        backend.sign.return_value = b"hw-sig"
+        hw = Mock()
+        hw.pub = "x-pub-obj"
+        hw.pub_bytes = b"x-pub"
+        hw.sig_pub = "ed-pub-obj"
+        hw.sig_pub_bytes = b"ed-pub"
+        hw.prv = object()  # truthy token-resident marker
+        hw.sig_prv = "token-sign-adapter"
+        hw.hash = b"hw-hash"
+        hw.hexhash = "68772d68617368"
+        hw._slot = "9a"
+        hw.sign.return_value = b"hw-sig"
         with patch.object(rns_mod, "_detect_app_name", return_value="sideband"), \
-             patch.object(rns_mod, "_get_hardware_keys_for_app",
-                          return_value=(b"ed-pub", b"x-pub")), \
-             patch.object(rns_mod, "AppIdentityMapper") as MapperCls:
-            MapperCls.return_value.get_app_slot.return_value = "9a"
+             patch.object(rns_mod, "_build_hardware_identity_for_app", return_value=hw):
             assert _install_monkey_patch(backend) is True
-
             ident = fake_rns.Identity()
 
         assert ident.pub_bytes == b"x-pub"
         assert ident.sig_pub_bytes == b"ed-pub"
+        assert ident.hash == b"hw-hash"
+        # No software private key is retained.
+        assert ident.prv_bytes is None
+        assert ident.sig_prv_bytes is None
         assert is_identity_hardware_backed(ident) is True
         assert get_identity_app_name(ident) == "sideband"
         assert get_identity_slot(ident) == "9a"
+        # sign() and decrypt() are routed to the token-backed identity.
         assert ident.sign(b"data") == b"hw-sig"
+        assert ident.decrypt is hw.decrypt
 
-    def test_patched_hw_sign_falls_back_on_error(self, reset_patch_state, fake_rns):
-        """If hardware sign fails, falls back to software signing."""
+    def test_patched_init_no_silent_software_fallback(self, reset_patch_state, fake_rns):
+        """A token sign error propagates; it must NOT silently fall back to a
+        software signature (which would not verify against the advertised key)."""
         backend = Mock()
-        backend.sign.side_effect = RuntimeError("token removed")
+        hw = Mock()
+        hw.pub_bytes = b"x-pub"
+        hw.sig_pub_bytes = b"ed-pub"
+        hw.prv = object()
+        hw.hash = b"hw-hash"
+        hw.hexhash = "68772d68617368"
+        hw._slot = "9a"
+        hw.sign.side_effect = RuntimeError("token removed")
         with patch.object(rns_mod, "_detect_app_name", return_value="sideband"), \
-             patch.object(rns_mod, "_get_hardware_keys_for_app",
-                          return_value=(b"ed-pub", b"x-pub")), \
-             patch.object(rns_mod, "AppIdentityMapper") as MapperCls:
-            MapperCls.return_value.get_app_slot.return_value = "9a"
+             patch.object(rns_mod, "_build_hardware_identity_for_app", return_value=hw):
             _install_monkey_patch(backend)
             ident = fake_rns.Identity()
 
-        # software fallback signature from fake RNS Identity
-        assert ident.sign(b"data") == b"sw-sig:data"
+        with pytest.raises(RuntimeError):
+            ident.sign(b"data")
 
     def test_patched_init_no_hardware_uses_software(self, reset_patch_state, fake_rns):
         """Without hardware keys, identity stays software-backed."""

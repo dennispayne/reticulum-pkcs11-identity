@@ -113,6 +113,66 @@ def _get_hardware_keys_for_app(app_name: str, backend=None, exclude_apps=None) -
         return None
 
 
+def _build_hardware_identity_for_app(app_name, backend=None, exclude_apps=None):
+    """Build a token-backed ``HardwareIdentity`` for *app_name*, or ``None``.
+
+    Returns ``None`` (so the caller falls back to a software identity) when no
+    backend is available, the app is excluded, the app has no mapped slot, or
+    its keys are not present on the token. Never raises.
+    """
+    if backend is None:
+        return None
+    try:
+        mapper = AppIdentityMapper(exclude_apps=exclude_apps or [])
+        slot = mapper.get_app_slot(app_name)
+        if not slot:
+            return None
+        # Imported lazily to avoid a circular import at module load time.
+        from .identity import create_app_hardware_identity
+
+        return create_app_hardware_identity(app_name, backend=backend, slot=slot)
+    except Exception as exc:
+        logger.debug(f"No hardware identity available for app '{app_name}': {exc}")
+        return None
+
+
+def _bind_hardware_identity(identity, hw_identity, app_name) -> None:
+    """Turn a plain ``RNS.Identity`` into a token-backed one.
+
+    Adopts *hw_identity*'s public material and routes the private-key
+    operations (``sign``/``decrypt``) to it, so the private key only ever lives
+    on the token. No software private key is retained, and the destination hash
+    is taken from the hardware identity so it matches the advertised keys.
+    """
+    identity.pub = hw_identity.pub
+    identity.pub_bytes = hw_identity.pub_bytes
+    identity.sig_pub = hw_identity.sig_pub
+    identity.sig_pub_bytes = hw_identity.sig_pub_bytes
+
+    # ``prv`` is a truthy token-resident marker (it lets RNS generate delivery
+    # proofs); the real X25519 key never leaves the token. ``prv_bytes`` stays
+    # ``None`` so the identity correctly reports it holds no in-memory key.
+    identity.prv = hw_identity.prv
+    identity.prv_bytes = None
+    identity.sig_prv = hw_identity.sig_prv
+    identity.sig_prv_bytes = None
+
+    identity.hash = hw_identity.hash
+    identity.hexhash = hw_identity.hexhash
+
+    # Route every private-key operation to the token. There is deliberately no
+    # software fallback: a software signature would not verify against the
+    # advertised hardware key, and the hardware key cannot be reconstructed.
+    identity.sign = hw_identity.sign
+    identity.decrypt = hw_identity.decrypt
+    identity.get_private_key = hw_identity.get_private_key
+
+    identity._is_hardware_backed = True
+    identity._hw_app_name = app_name
+    identity._hw_slot = getattr(hw_identity, "_slot", None)
+    identity._hw_identity = hw_identity
+
+
 def _install_monkey_patch(backend, exclude_apps=None) -> bool:
     """
     Install the monkey-patch on RNS.Identity.
@@ -136,58 +196,28 @@ def _install_monkey_patch(backend, exclude_apps=None) -> bool:
     original_init = RNS.Identity.__init__
 
     def patched_init(self, create_keys: bool = True):
+        """Patched ``RNS.Identity.__init__`` with transparent hardware injection.
+
+        When a token-backed identity is available for the detected app, the new
+        instance is turned into a hardware identity: its public keys, hash and
+        private-key operations are taken from a real ``HardwareIdentity`` so the
+        private key never exists in software. Otherwise it initialises as a
+        normal software identity.
         """
-        Patched RNS.Identity.__init__() with transparent hardware injection.
-        """
-        # Try to detect app and get hardware keys
         app_name = _detect_app_name()
-        hardware_keys = None
-
+        hw_identity = None
         if app_name:
-            hardware_keys = _get_hardware_keys_for_app(app_name, backend=backend, exclude_apps=exclude_apps)
+            hw_identity = _build_hardware_identity_for_app(
+                app_name, backend=backend, exclude_apps=exclude_apps
+            )
 
-        if hardware_keys:
-            # Hardware keys available - inject them
-            ed_pub, x_pub = hardware_keys
-            
-            # Call original init (will create software keys)
-            original_init(self, create_keys=create_keys)
-            
-            # Override with hardware keys
-            self.pub_bytes = x_pub
-            self.sig_pub_bytes = ed_pub
-            
-            mapper = AppIdentityMapper(exclude_apps=exclude_apps or [])
-            slot = mapper.get_app_slot(app_name)
-            
-            if slot:
-                # Store hardware info for sign() override
-                self._hw_backend = backend
-                self._hw_slot = slot
-                self._hw_app_name = app_name
-                
-                # Override sign() method
-                original_sign = self.sign
-                
-                def hw_sign(message: bytes) -> bytes:
-                    """Sign using hardware key."""
-                    try:
-                        sign_key_label = f"{app_name}-sign"
-                        return self._hw_backend.sign(
-                            message,
-                            key_label=sign_key_label,
-                            key_id=None,
-                        )
-                    except Exception:
-                        # Fallback to software signing
-                        return original_sign(message)
-                
-                self.sign = hw_sign
-                
-                # Mark as hardware-backed
-                self._is_hardware_backed = True
+        if hw_identity is not None:
+            # Initialise the RNS.Identity scaffolding WITHOUT generating any
+            # software keys, then adopt the token-backed material/operations.
+            original_init(self, create_keys=False)
+            _bind_hardware_identity(self, hw_identity, app_name)
         else:
-            # Hardware not available - use software identity as usual
+            # No hardware available - behave like a normal software identity.
             original_init(self, create_keys=create_keys)
 
     # Apply monkey patch

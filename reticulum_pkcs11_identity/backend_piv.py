@@ -167,11 +167,11 @@ class PKCS11PIVBackend:
             if self._session:
                 try:
                     self._session.logout()
-                except:
+                except Exception:
                     pass
                 try:
                     self._session.close()
-                except:
+                except Exception:
                     pass
                 self._session = None
             self._state = SessionLifecycle.NO_SESSION
@@ -189,7 +189,7 @@ class PKCS11PIVBackend:
 
             try:
                 token = slot.get_token()
-            except:
+            except Exception:
                 continue
 
             if self._token_label is not None:
@@ -414,7 +414,12 @@ class PKCS11PIVBackend:
                     Mechanism(
                         "ecdh1-derive",
                         {
-                            "kdf": KDF.SHA256,
+                            # RNS performs its own HKDF over the *raw* X25519
+                            # shared secret, so derive with CKD_NULL (no KDF).
+                            # KDF.SHA256 would yield a different secret and break
+                            # RNS decryption (the generic PKCS11Backend uses
+                            # KDF.NULL for the same reason).
+                            "kdf": KDF.NULL,
                             "publicData": peer_ec_point,
                         },
                     ),

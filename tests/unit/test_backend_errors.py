@@ -18,6 +18,7 @@ from reticulum_pkcs11_identity.backend import (
 )
 from reticulum_pkcs11_identity.exceptions import (
     PKCS11BackendError,
+    PKCS11KeyNotFoundError,
     PKCS11SessionError,
 )
 
@@ -303,6 +304,54 @@ class TestFindKeyErrors:
 
         assert result is fake_key
         assert fake_session.get_key.call_args.kwargs["id"] == key_id
+
+    def test_find_key_falls_back_to_type_agnostic_lookup(self):
+        """If the typed lookup misses (e.g. X25519 stored as CKK_EC_MONTGOMERY,
+        which python-pkcs11 may not even expose), retry by label without a key
+        type so the key resolves regardless of how the token classifies it."""
+        from pkcs11 import ObjectClass, KeyType
+
+        backend = _make_bare_backend()
+        fake_session = mock.MagicMock()
+        fake_key = mock.MagicMock()
+
+        def get_key(**kwargs):
+            if "key_type" in kwargs:
+                raise pkcs11.exceptions.NoSuchKey()
+            return fake_key
+
+        fake_session.get_key.side_effect = get_key
+
+        result = backend._find_key(
+            fake_session,
+            ObjectClass.PRIVATE_KEY,
+            KeyType.EC_EDWARDS,
+            key_label="app-enc",
+            key_id=None,
+        )
+
+        assert result is fake_key
+        # Tried the typed lookup first, then fell back to a type-agnostic one.
+        assert fake_session.get_key.call_count == 2
+        assert "key_type" not in fake_session.get_key.call_args.kwargs
+
+    def test_find_key_not_found_after_fallback_raises(self):
+        """If neither the typed nor the type-agnostic lookup matches,
+        KeyNotFound propagates."""
+        from pkcs11 import ObjectClass, KeyType
+
+        backend = _make_bare_backend()
+        fake_session = mock.MagicMock()
+        fake_session.get_key.side_effect = pkcs11.exceptions.NoSuchKey()
+
+        with pytest.raises(PKCS11KeyNotFoundError):
+            backend._find_key(
+                fake_session,
+                ObjectClass.PRIVATE_KEY,
+                KeyType.EC_EDWARDS,
+                key_label="missing-enc",
+                key_id=None,
+            )
 
 
 # ---------------------------------------------------------------------------

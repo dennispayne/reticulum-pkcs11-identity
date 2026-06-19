@@ -546,6 +546,18 @@ def make_app_hardware_identity_class(
             f"Backend must be provided explicitly for app '{app_name}'"
         )
 
+    # The identity drives the token through the generic PKCS11Backend interface
+    # (get_public_key_bytes / sign / ecdh_derive). Reject a backend that does not
+    # implement it — e.g. the YubiKey-PIV helper backend, whose method
+    # signatures differ — with a clear error instead of a cryptic AttributeError
+    # deep inside key loading.
+    if not hasattr(backend, "get_public_key_bytes"):
+        raise PKCS11BackendError(
+            f"Backend for app '{app_name}' must implement the PKCS11Backend "
+            f"interface (got {type(backend).__name__}); use "
+            "reticulum_pkcs11_identity.backend.PKCS11Backend."
+        )
+
     # Auto-lookup slot via AppIdentityMapper if needed
     if slot is None:
         try:
@@ -733,6 +745,35 @@ def make_app_hardware_identity_class(
             return super().get_private_key()
 
         # ------------------------------------------------------------------
+        # Token-change detection
+        # ------------------------------------------------------------------
+
+        def _check_token_state(self):
+            """Detect a swapped token before a private-key operation.
+
+            Mirrors the LXMF identity: if the monitor reports the token has
+            changed, the session is invalidated and a clear error is raised so
+            the caller re-authenticates rather than signing/decrypting against
+            the wrong token.
+            """
+            try:
+                monitor = self._backend.get_token_monitor()
+                changed, reason = monitor.detect_changes()
+                if changed:
+                    monitor.invalidate_sessions()
+                    raise RuntimeError(
+                        f"PKCS#11 token has changed: {reason}. "
+                        "Please re-authenticate with PIN or physical card."
+                    )
+            except RuntimeError:
+                raise
+            except Exception as exc:
+                RNS.log(
+                    f"Token state check failed: {exc}",
+                    RNS.LOG_DEBUG,
+                ) if RNS.sl(RNS.LOG_DEBUG) else None
+
+        # ------------------------------------------------------------------
         # Signing — delegated to the token
         # ------------------------------------------------------------------
 
@@ -745,6 +786,7 @@ def make_app_hardware_identity_class(
             """
             if self._is_local_hardware:
                 try:
+                    self._check_token_state()
                     return self._backend.sign(
                         message,
                         key_label=self._sign_key_label,
@@ -794,6 +836,9 @@ def make_app_hardware_identity_class(
                     enforce_ratchets=enforce_ratchets,
                     ratchet_id_receiver=ratchet_id_receiver,
                 )
+
+            # Check for token changes before attempting ECDH on the token.
+            self._check_token_state()
 
             if len(ciphertext_token) <= _HALF_KEYSIZE:
                 RNS.log(
