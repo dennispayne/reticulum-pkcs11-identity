@@ -537,3 +537,41 @@ class TestKeyRetrievalAfterProvisioning:
 
         assert shared_secret is not None
         assert len(shared_secret) == 32
+
+
+class TestMultiAppIdentityCrypto:
+    """End-to-end sign/verify and encrypt/decrypt round-trips for the multi-app
+    HardwareIdentity produced by ``make_app_hardware_identity_class``.
+
+    The other multi-app tests only check key loading, hashing and that two
+    signatures differ; none of them verify a signature or decrypt anything, so
+    the identity's token-backed ``sign()`` and ``decrypt()`` paths were never
+    actually exercised. These round-trips close that gap.
+    """
+
+    def _app_identity(self, backend, app_name, slot="9a"):
+        backend.ensure_keys_for_app(app_name)
+        cls = make_app_hardware_identity_class(
+            app_name=app_name,
+            backend=backend,
+            slot=slot,
+        )
+        return cls(create_keys=True)
+
+    @pytest.mark.backend_piv
+    def test_multi_app_identity_sign_validate_roundtrip(self, pkcs11_backend):
+        """A token-signed message validates against the identity's public key."""
+        identity = self._app_identity(pkcs11_backend, "rt_sign_app")
+        message = b"multi-app hardware signature round-trip"
+        signature = identity.sign(message)
+        assert identity.validate(signature, message) is True
+        assert identity.validate(signature, b"a different message") is False
+
+    @pytest.mark.backend_piv
+    def test_multi_app_identity_encrypt_decrypt_roundtrip(self, pkcs11_backend):
+        """Ciphertext encrypted to the identity decrypts via token ECDH."""
+        identity = self._app_identity(pkcs11_backend, "rt_enc_app")
+        plaintext = b"multi-app hardware encryption round-trip"
+        ciphertext = identity.encrypt(plaintext)
+        assert ciphertext != plaintext
+        assert identity.decrypt(ciphertext) == plaintext
