@@ -9,9 +9,6 @@
   // choice is stored per-machine). VS Code settings have no per-OS variant for
   // this key, so a single POSIX path is committed.
   "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
-  "python.analysis.extraPaths": [
-    "${workspaceFolder}/src"
-  ],
   "python.testing.pytestEnabled": true,
   "python.testing.unittestEnabled": false,
   "python.testing.autoTestDiscoverOnSaveEnabled": true,
@@ -26,8 +23,5 @@
   "[python]": {
     "editor.defaultFormatter": "ms-python.python",
     "editor.formatOnSave": false
-  },
-  "python.analysis.diagnosticSeverityOverrides": {
-    "reportIncompatibleMethodOverride": "warning"
   }
 }
