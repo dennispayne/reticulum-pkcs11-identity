@@ -4,14 +4,17 @@ This directory contains technical documentation for developers and maintainers.
 
 ## Architecture & Design
 
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** — Complete v2.1 architecture documentation
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** — Architecture documentation
   - Core interception points (RNS.Identity.from_file)
   - Provider detection and prioritization
-  - Token discovery and slot mapping
-  - App-to-slot association strategy
+  - Token discovery
+  - The single hardware identity model (shared across apps via RNS aspects)
   - Pin caching and token monitoring
   - Cross-node identity discovery
   - Design decisions and rationale
+
+> The opt-in multi-identity / per-app-slot machinery is experimental and lives
+> under `reticulum_pkcs11_identity.experimental`. It is disabled by default.
 
 ## Integration
 

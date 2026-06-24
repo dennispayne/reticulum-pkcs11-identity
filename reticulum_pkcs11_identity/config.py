@@ -1,8 +1,10 @@
 """
 Configuration management for PKCS#11 hardware identities.
 
-Handles PIN, provider selection, token selection, and app-to-slot mapping.
-Config stored in ~/.reticulum/config [hardware_identity] section
+Handles PIN, provider selection, and token selection. Config stored in
+~/.reticulum/config [hardware_identity] section. The experimental
+multi-identity feature adds per-app slot mapping on top of this; see
+``reticulum_pkcs11_identity.experimental``.
 """
 
 import configparser
