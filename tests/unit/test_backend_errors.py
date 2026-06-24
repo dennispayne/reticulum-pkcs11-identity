@@ -8,6 +8,7 @@ import threading
 import unittest.mock as mock
 
 import pkcs11
+from pkcs11.constants import TokenFlag
 import pytest
 
 from reticulum_pkcs11_identity.backend import (
@@ -156,6 +157,48 @@ class TestResolvePin:
             result = PKCS11Backend._resolve_pin(None, None, None)
         assert result == "gp-pin"
         gp.assert_called_once_with("PKCS#11 user PIN: ")
+
+
+# ---------------------------------------------------------------------------
+# Protected authentication path (token-side PIN entry)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.backend
+class TestProtectedAuth:
+    def test_protected_auth_flag_detected(self):
+        token = mock.MagicMock()
+        token.flags = TokenFlag.PROTECTED_AUTHENTICATION_PATH
+        assert PKCS11Backend._token_uses_protected_auth(token) is True
+
+    def test_no_protected_auth_flag(self):
+        token = mock.MagicMock()
+        token.flags = TokenFlag.WRITE_PROTECTED
+        assert PKCS11Backend._token_uses_protected_auth(token) is False
+
+    def test_missing_flags_is_false(self):
+        class _T:
+            @property
+            def flags(self):
+                raise AttributeError("no flags")
+
+        assert PKCS11Backend._token_uses_protected_auth(_T()) is False
+
+    def test_open_session_uses_protected_auth_without_prompting(self):
+        backend = _make_bare_backend()
+        token = mock.MagicMock()
+        token.flags = TokenFlag.PROTECTED_AUTHENTICATION_PATH
+        opened = mock.MagicMock()
+        token.open.return_value = opened
+        with mock.patch.object(backend, "_get_token_for_session", return_value=token), \
+             mock.patch.object(backend, "_token_fingerprint", return_value=("p", "s", 0)), \
+             mock.patch.object(backend, "_bind_or_validate_token_binding"), \
+             mock.patch("getpass.getpass", side_effect=AssertionError("must not prompt")):
+            backend.open_session()
+        token.open.assert_called_once_with(rw=True, user_pin=pkcs11.PROTECTED_AUTH)
+        # The PIN is collected by the token; nothing is held in this process.
+        assert backend._pin is None
+        assert backend._pin_callback is None
+        assert backend._session is opened
 
 
 # ---------------------------------------------------------------------------

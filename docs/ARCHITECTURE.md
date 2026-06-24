@@ -92,14 +92,19 @@ This prevents token confusion where User B's operations could accidentally use U
 Our implementation leverages the native PKCS#11 specification for PIN handling rather than implementing custom caching:
 
 ```python
-# Direct PKCS#11 PIN entry
-session = lib.openSession(slot_id, CKF_SERIAL_SESSION | CKF_RW_SESSION)
-session.login(CKU_USER, os.environ.get("RNS_PKCS11_PIN"))
-# PIN cached by PKCS#11 library for session lifetime
-private_key = session.getObjects([(CKA_CLASS, CKO_PRIVATE_KEY)])
+# PIN obtained at session start -- entered on the token's own PIN pad
+# (protected authentication path) when available, otherwise prompted. It is
+# never read from a config file.
+if token.flags & TokenFlag.PROTECTED_AUTHENTICATION_PATH:
+    session = token.open(rw=True, user_pin=pkcs11.PROTECTED_AUTH)
+else:
+    session = token.open(rw=True, user_pin=getpass.getpass("PKCS#11 user PIN: "))
+# PIN cached by the PKCS#11 library for the session lifetime
+private_key = session.get_key(object_class=ObjectClass.PRIVATE_KEY)
 ```
 
 Benefits:
+- **Never persisted**: The PIN is never written to a config file; it is collected at session start or entered on the token itself
 - **PKCS#11 spec compliance**: Pins are handled by the library, not our code
 - **No custom caching**: Avoids reinventing secure storage mechanisms
 - **Session scoped**: PIN cached for the identity's session lifetime (application lifetime)

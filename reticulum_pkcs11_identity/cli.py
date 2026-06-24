@@ -20,8 +20,8 @@ try:
 except ImportError:
     tabulate = None
 
-from .app_identity import AppIdentityMapper, PIV_SLOTS, PIV_SLOT_NAMES
-from .config import load_hardware_identity_config
+from .experimental.app_identity import AppIdentityMapper, PIV_SLOTS, PIV_SLOT_NAMES
+from .config import load_hardware_identity_config, multi_identity_enabled
 from .discovery import enumerate_token_inventory
 
 
@@ -48,10 +48,15 @@ class StatusReporter:
         self.warnings: List[str] = []
         self.running_apps: Set[str] = set()
         
-        if self.config.get("exclude_apps"):
-            self.mapper = AppIdentityMapper(exclude_apps=self.config["exclude_apps"])
-        else:
-            self.mapper = AppIdentityMapper()
+        # The per-app slot view (Apps / Slot-Usage sections) is part of the
+        # experimental multi-identity feature. Only build the mapper when it is
+        # enabled; otherwise self.mapper stays None and those sections are
+        # hidden entirely.
+        if multi_identity_enabled(self.config):
+            if self.config.get("exclude_apps"):
+                self.mapper = AppIdentityMapper(exclude_apps=self.config["exclude_apps"])
+            else:
+                self.mapper = AppIdentityMapper()
         
         # Try to detect running apps
         self._detect_running_apps()

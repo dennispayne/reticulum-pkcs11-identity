@@ -43,7 +43,13 @@ def load_hardware_identity_config(reticulum_config_path: str | None = None) -> D
         "provider": None,
         "token_label": None,
         "exclude_apps": [],
-        "detected_providers": {}
+        "detected_providers": {},
+        # Experimental feature gates (default OFF). The production model is a
+        # single hardware identity used across apps via RNS aspects; the
+        # multi-identity / per-app-slot machinery is opt-in and lives under
+        # ``reticulum_pkcs11_identity.experimental``.
+        "experimental_features": False,
+        "multi_identity": False,
     }
     
     if not config_path.exists():
@@ -62,6 +68,19 @@ def load_hardware_identity_config(reticulum_config_path: str | None = None) -> D
         if parser.has_option("hardware_identity", "enabled"):
             enabled_str = parser.get("hardware_identity", "enabled").lower()
             config["enabled"] = enabled_str in ("true", "yes", "1", "on")
+
+        # Parse experimental feature gates. Both the master switch
+        # (experimental_features) and the specific flag (multi_identity) must be
+        # truthy for the multi-identity feature to activate.
+        _truthy = ("true", "yes", "1", "on")
+        if parser.has_option("hardware_identity", "experimental_features"):
+            config["experimental_features"] = (
+                parser.get("hardware_identity", "experimental_features").strip().lower() in _truthy
+            )
+        if parser.has_option("hardware_identity", "multi_identity"):
+            config["multi_identity"] = (
+                parser.get("hardware_identity", "multi_identity").strip().lower() in _truthy
+            )
         
         # Parse provider
         if parser.has_option("hardware_identity", "provider"):
@@ -126,6 +145,22 @@ def load_hardware_identity_config(reticulum_config_path: str | None = None) -> D
     return config
 
 
+def multi_identity_enabled(config: Dict[str, Any] | None = None) -> bool:
+    """Return True only if the experimental multi-identity feature is enabled.
+
+    Requires BOTH ``experimental_features`` and ``multi_identity`` to be set in
+    the ``[hardware_identity]`` config section. The production default is a
+    single hardware identity shared across apps via RNS aspects, so this returns
+    False unless the user has explicitly opted in.
+
+    :param config: A config dict from :func:`load_hardware_identity_config`.
+        Loaded automatically when omitted.
+    """
+    if config is None:
+        config = load_hardware_identity_config()
+    return bool(config.get("experimental_features")) and bool(config.get("multi_identity"))
+
+
 class PKCS11Config:
     """Configuration for PKCS#11 provider and hardware identity setup."""
 
@@ -143,8 +178,7 @@ class PKCS11Config:
         self._data: Dict[str, Any] = {
             "provider": "auto",  # auto-detect
             "token_label": None,  # Will be detected
-            "pin": None,
-            "pin_env": "RNS_PKCS11_PIN",  # Fallback to env var
+            "pin_env": "RNS_PKCS11_PIN",  # Name of an env var to read the PIN from
         }
         
         # Load from file if it exists
@@ -174,7 +208,17 @@ class PKCS11Config:
                     if (value.startswith('"') and value.endswith('"')) or \
                        (value.startswith("'") and value.endswith("'")):
                         value = value[1:-1]
-                    
+
+                    # Never honor a PIN written into the config file: storing a
+                    # PIN defeats its purpose. The PIN is collected at session
+                    # start (token PIN pad or interactive prompt) instead.
+                    if key == "pin":
+                        logger.warning(
+                            "Ignoring 'pin' in %s: PINs are never read from a config file.",
+                            self.config_file,
+                        )
+                        continue
+
                     self._data[key] = value
         except Exception as e:
             raise PKCS11ConfigError(f"Failed to load config: {e}") from e
@@ -190,6 +234,9 @@ class PKCS11Config:
                 
                 # Write each key-value pair
                 for key in sorted(self._data.keys()):
+                    if key == "pin":
+                        # A PIN must never be persisted to disk.
+                        continue
                     value = self._data[key]
                     if value is None:
                         continue
@@ -229,38 +276,39 @@ class PKCS11Config:
 
     def get_pin(self) -> Optional[str]:
         """
-        Get PIN.
-        
-        Tries in order:
-        1. Configured PIN
-        2. Environment variable (RNS_PKCS11_PIN or custom)
-        3. None
+        Get a PIN for the current process, if one is available without prompting.
+
+        The PIN is **never** read from the config file. Returns, in order:
+
+        1. A PIN set in memory this process via :meth:`set_pin`.
+        2. The environment variable named by ``pin_env`` (default
+           ``RNS_PKCS11_PIN``), for non-interactive/automation use.
+        3. ``None`` -- the caller should prompt at session start or rely on the
+           token's own PIN entry.
         """
-        # First try configured PIN
-        pin = self.get("pin")
+        # In-memory PIN (this process only -- never loaded from disk).
+        pin = self._data.get("pin")
         if pin:
             return pin
-        
-        # Try environment variable
+
+        # Environment variable (not a config file).
         pin_env = self.get("pin_env", "RNS_PKCS11_PIN")
         if pin_env:
             pin = os.environ.get(pin_env)
             if pin:
                 return pin
-        
+
         return None
 
-    def set_pin(self, pin: str, save: bool = True) -> None:
+    def set_pin(self, pin: str, save: bool = False) -> None:
         """
-        Set PIN.
-        
-        Args:
-            pin: PIN string
-            save: If False, only store in memory (not persisted to disk)
+        Hold a PIN in memory for the current process only.
+
+        The PIN is **never** written to disk, regardless of *save*: persisting a
+        PIN would defeat its purpose. *save* is retained only for backward
+        compatibility and is ignored.
         """
         self._data["pin"] = pin
-        if save:
-            self._save()
 
     def get_pin_env_var(self) -> str:
         """Get name of environment variable for PIN fallback."""
@@ -273,17 +321,14 @@ class PKCS11Config:
     def validate(self) -> None:
         """
         Validate config is usable.
-        
+
+        The PIN is intentionally **not** required here: it is collected at
+        session start (token PIN pad or interactive prompt), never stored in
+        configuration.
+
         Raises:
             PKCS11ConfigError: If config is invalid
         """
-        # PIN must be available
-        pin = self.get_pin()
-        if not pin:
-            raise PKCS11ConfigError(
-                "PIN not configured. Set 'pin' in config or RNS_PKCS11_PIN env var."
-            )
-        
         # Provider should be set (can be "auto")
         provider = self.get_provider()
         if not provider:

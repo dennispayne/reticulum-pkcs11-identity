@@ -6,7 +6,7 @@ import os
 import tempfile
 import pytest
 
-from reticulum_pkcs11_identity.app_identity import AppIdentityMapper, PIV_SLOTS
+from reticulum_pkcs11_identity.experimental.app_identity import AppIdentityMapper, PIV_SLOTS
 from reticulum_pkcs11_identity.pkcs11_provider import (
     discover_providers,
     get_default_provider,

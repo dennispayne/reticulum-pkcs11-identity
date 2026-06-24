@@ -31,7 +31,7 @@ from reticulum_pkcs11_identity.exceptions import (
     PKCS11BackendError,
     PKCS11KeyNotFoundError,
 )
-from reticulum_pkcs11_identity.app_identity import AppIdentityMapper
+from reticulum_pkcs11_identity.experimental.app_identity import AppIdentityMapper
 
 
 class TestMakeLXMFIdentityClass:
@@ -49,7 +49,7 @@ class TestMakeLXMFIdentityClass:
         )
         assert cls is not None
         assert hasattr(cls, "__name__")
-        assert cls.__name__ == "LXMFIdentity"
+        assert cls.__name__ == "HardwareIdentity"
 
     @pytest.mark.backend
     def test_make_lxmf_identity_class_instantiation(self, pkcs11_backend):
@@ -264,7 +264,7 @@ class TestCreateAppHardwareIdentity:
     ):
         """Test creating app identity with explicit backend."""
         from reticulum_pkcs11_identity.backend import PKCS11Backend
-        from reticulum_pkcs11_identity.app_identity import AppIdentityMapper
+        from reticulum_pkcs11_identity.experimental.app_identity import AppIdentityMapper
 
         old_conf = os.environ.get("SOFTHSM2_CONF")
         os.environ["SOFTHSM2_CONF"] = softhsm2_env["SOFTHSM2_CONF"]
@@ -317,7 +317,7 @@ class TestGetAppIdentityKeys:
     ):
         """Test that get_app_identity_keys returns (ed_pub, x_pub) tuple."""
         from reticulum_pkcs11_identity.backend import PKCS11Backend
-        from reticulum_pkcs11_identity.app_identity import AppIdentityMapper
+        from reticulum_pkcs11_identity.experimental.app_identity import AppIdentityMapper
 
         old_conf = os.environ.get("SOFTHSM2_CONF")
         os.environ["SOFTHSM2_CONF"] = softhsm2_env["SOFTHSM2_CONF"]

@@ -21,8 +21,8 @@ import os
 import inspect
 from typing import Optional
 
-from .app_identity import AppIdentityMapper
-from .config import load_hardware_identity_config
+from .experimental.app_identity import AppIdentityMapper
+from .config import load_hardware_identity_config, multi_identity_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -248,6 +248,16 @@ def _auto_initialize() -> None:
         # Load config
         config = load_hardware_identity_config()
         exclude_apps = config.get("exclude_apps", [])
+
+        # Transparent per-app injection is the experimental multi-identity path.
+        # Stay inert unless it is explicitly enabled, so the production default
+        # (one identity + RNS aspects) is never silently overridden.
+        if not multi_identity_enabled(config):
+            logger.info(
+                "Multi-identity (experimental) disabled; transparent per-app "
+                "hardware injection not installed"
+            )
+            return
         
         if not config.get("enabled"):
             logger.info("Hardware identity injection disabled or not configured")

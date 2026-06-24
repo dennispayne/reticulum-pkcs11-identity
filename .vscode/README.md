@@ -21,7 +21,7 @@ This directory contains VS Code configuration files for local development, debug
 
    # For YubiKey hardware testing:
    # Edit .vscode/.env and set:
-   #   PKCS11_TEST_TOKEN=hw
+   #   PKCS11_TEST_TOKEN=yubikey
    #   PKCS11_TEST_PIN=123456
    ```
 
@@ -79,7 +79,7 @@ Template for environment variables. Copy to `.env` for local use.
 PKCS11_TEST_TOKEN=softhsm
 
 # YubiKey hardware (requires PIN)
-PKCS11_TEST_TOKEN=hw
+PKCS11_TEST_TOKEN=yubikey
 PKCS11_TEST_PIN=123456
 PKCS11_TEST_LABEL=YubiKey PIV #12345678  # optional, auto-detected
 ```
@@ -128,7 +128,7 @@ To install all recommended extensions, click the "Extensions" icon and find "Rec
 cp .vscode/.env.example .vscode/.env
 
 # Edit .vscode/.env
-# Set: PKCS11_TEST_TOKEN=hw
+# Set: PKCS11_TEST_TOKEN=yubikey
 # Set: PKCS11_TEST_PIN=123456 (your YubiKey user PIN)
 ```
 
@@ -142,7 +142,7 @@ cp .vscode/.env.example .vscode/.env
 - Tests run against real YubiKey (slower, but validates hardware integration)
 
 **4. Switch between backends:**
-- Edit `.vscode/.env`: Change `PKCS11_TEST_TOKEN=softhsm` or `hw`
+- Edit `.vscode/.env`: Change `PKCS11_TEST_TOKEN=softhsm` or `yubikey`
 - Re-run tests
 - No code changes needed
 
@@ -163,7 +163,7 @@ ctrl+shift+p → "Run Task" → "Tests: Run all (SoftHSM2, default)"
 ctrl+shift+p → "Run Task" → "Tests: Run with YubiKey hardware"
 
 # Or set env var and run from terminal
-$env:PKCS11_TEST_TOKEN = "hw"
+$env:PKCS11_TEST_TOKEN = "yubikey"
 $env:PKCS11_TEST_PIN = "123456"
 .venv\Scripts\python.exe -m pytest tests/ -q
 ```
@@ -199,8 +199,8 @@ Set these in `.vscode/.env` (or shell for command-line testing):
 
 | Variable | Purpose | Example | Required |
 |----------|---------|---------|----------|
-| `PKCS11_TEST_TOKEN` | Token backend: 'hw' or 'softhsm' | `hw` | No (auto-detect) |
-| `PKCS11_TEST_PIN` | User PIN for hardware token | `123456` | Yes if TOKEN=hw |
+| `PKCS11_TEST_TOKEN` | Token backend: 'yubikey' or 'softhsm' | `yubikey` | No (auto-detect) |
+| `PKCS11_TEST_PIN` | User PIN for hardware token | `123456` | Yes if TOKEN=yubikey |
 | `PKCS11_TEST_LABEL` | Token label (auto-detected) | `YubiKey PIV #123` | No |
 | `SOFTHSM2_MODULE` | Path to libsofthsm2 (auto-detected) | `/usr/lib/softhsm/...` | No |
 

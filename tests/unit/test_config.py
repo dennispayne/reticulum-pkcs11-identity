@@ -6,8 +6,58 @@ import os
 import tempfile
 import pytest
 
-from reticulum_pkcs11_identity.config import PKCS11Config, ConfigBuilder, load_hardware_identity_config
+from reticulum_pkcs11_identity.config import (
+    PKCS11Config,
+    ConfigBuilder,
+    load_hardware_identity_config,
+    multi_identity_enabled,
+)
 from reticulum_pkcs11_identity.exceptions import PKCS11ConfigError
+
+
+class TestExperimentalFlags:
+    """Config-driven gate for the experimental multi-identity feature."""
+
+    def _write_config(self, tmpdir, body):
+        path = os.path.join(tmpdir, "config")
+        with open(path, "w") as fh:
+            fh.write(body)
+        return path
+
+    def test_flags_default_off(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._write_config(tmpdir, "[hardware_identity]\nenabled = true\n")
+            cfg = load_hardware_identity_config(path)
+            assert cfg["experimental_features"] is False
+            assert cfg["multi_identity"] is False
+            assert multi_identity_enabled(cfg) is False
+
+    def test_both_flags_enable_feature(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._write_config(
+                tmpdir,
+                "[hardware_identity]\nexperimental_features = on\nmulti_identity = on\n",
+            )
+            cfg = load_hardware_identity_config(path)
+            assert cfg["experimental_features"] is True
+            assert cfg["multi_identity"] is True
+            assert multi_identity_enabled(cfg) is True
+
+    def test_master_switch_required(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._write_config(tmpdir, "[hardware_identity]\nmulti_identity = on\n")
+            cfg = load_hardware_identity_config(path)
+            # multi_identity alone is not enough without experimental_features.
+            assert multi_identity_enabled(cfg) is False
+
+    def test_feature_flag_required(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._write_config(tmpdir, "[hardware_identity]\nexperimental_features = on\n")
+            cfg = load_hardware_identity_config(path)
+            assert multi_identity_enabled(cfg) is False
+
+    def test_missing_or_empty_config_is_disabled(self):
+        assert multi_identity_enabled({}) is False
 
 
 class TestPKCS11Config:
@@ -24,7 +74,7 @@ class TestPKCS11Config:
             assert config.get_pin_env_var() == "RNS_PKCS11_PIN"
 
     def test_config_save_and_load(self):
-        """Test config persistence."""
+        """Provider/token persist, but the PIN is never written to disk."""
         with tempfile.TemporaryDirectory() as tmpdir:
             config_file = os.path.join(tmpdir, "config.conf")
             
@@ -32,13 +82,16 @@ class TestPKCS11Config:
             config1 = PKCS11Config(config_file)
             config1.set_provider("/usr/lib/libykcs11.so")
             config1.set_token_label("YubiKey PIV #12345")
-            config1.set_pin("123456", save=True)
+            config1.set_pin("123456")
             
             # Read config
             config2 = PKCS11Config(config_file)
             assert config2.get_provider() == "/usr/lib/libykcs11.so"
             assert config2.get_token_label() == "YubiKey PIV #12345"
-            assert config2.get_pin() == "123456"
+            # The PIN must never have been persisted to disk.
+            assert config2.get_pin() is None
+            with open(config_file) as fh:
+                assert "123456" not in fh.read()
 
     def test_config_pin_from_env(self):
         """Test PIN retrieval from environment variable."""
@@ -55,7 +108,7 @@ class TestPKCS11Config:
                 del os.environ["RNS_PKCS11_PIN"]
 
     def test_config_pin_priority(self):
-        """Test PIN priority: file > env var."""
+        """An in-memory PIN takes priority over the env var (and is not saved)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             config_file = os.path.join(tmpdir, "config.conf")
             config = PKCS11Config(config_file)
@@ -63,9 +116,9 @@ class TestPKCS11Config:
             # Set env var
             os.environ["RNS_PKCS11_PIN"] = "env_pin"
             try:
-                # Set file PIN (should take priority)
-                config.set_pin("file_pin", save=True)
-                assert config.get_pin() == "file_pin"
+                # An in-memory PIN (this process only) takes priority.
+                config.set_pin("mem_pin")
+                assert config.get_pin() == "mem_pin"
             finally:
                 del os.environ["RNS_PKCS11_PIN"]
 
@@ -83,25 +136,41 @@ class TestPKCS11Config:
             finally:
                 del os.environ["MY_CUSTOM_PIN_VAR"]
 
-    def test_config_validate_missing_pin(self):
-        """Test validation fails with missing PIN."""
+    def test_config_validate_no_pin_required(self):
+        """Validation no longer requires a stored PIN (it is prompted at runtime)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             config_file = os.path.join(tmpdir, "config.conf")
             config = PKCS11Config(config_file)
             
-            # No PIN set
+            # No PIN set: validation still passes (provider defaults to "auto").
+            config.validate()
+
+            # But a missing provider still fails.
+            config.set_provider("")
             with pytest.raises(PKCS11ConfigError):
                 config.validate()
 
     def test_config_validate_success(self):
-        """Test validation succeeds with PIN."""
+        """Validation succeeds when a provider is configured."""
         with tempfile.TemporaryDirectory() as tmpdir:
             config_file = os.path.join(tmpdir, "config.conf")
             config = PKCS11Config(config_file)
-            config.set_pin("123456", save=True)
+            config.set_provider("/usr/lib/libykcs11.so")
             
-            # Should not raise
+            # Should not raise (no PIN required).
             config.validate()
+
+    def test_config_pin_in_file_is_ignored(self):
+        """A PIN manually written into the config file is ignored on load."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = os.path.join(tmpdir, "config.conf")
+            with open(config_file, "w") as fh:
+                fh.write('provider = "/usr/lib/libykcs11.so"\n')
+                fh.write('pin = "123456"\n')
+
+            config = PKCS11Config(config_file)
+            assert config.get_provider() == "/usr/lib/libykcs11.so"
+            assert config.get_pin() is None
 
     def test_config_builder(self):
         """Test ConfigBuilder fluent API."""

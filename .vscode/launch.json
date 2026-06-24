@@ -47,7 +47,7 @@
       "subProcess": false,
       "envFile": "${workspaceFolder}/.vscode/.env",
       "env": {
-        "PKCS11_TEST_TOKEN": "hw"
+        "PKCS11_TEST_TOKEN": "yubikey"
       }
     },
     {
@@ -80,7 +80,7 @@
       "subProcess": false,
       "envFile": "${workspaceFolder}/.vscode/.env",
       "env": {
-        "PKCS11_TEST_TOKEN": "hw"
+        "PKCS11_TEST_TOKEN": "yubikey"
       }
     },
     {

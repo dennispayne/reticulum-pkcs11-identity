@@ -52,6 +52,11 @@ _logger = logging.getLogger(__name__)
 _ED25519_OID = bytes([0x06, 0x03, 0x2B, 0x65, 0x70])
 # X25519 OID 1.3.101.110 → 06 03 2B 65 6E
 _X25519_OID = bytes([0x06, 0x03, 0x2B, 0x65, 0x6E])
+# Some PKCS#11 modules (notably Yubico's libykcs11) do not report the curve OID
+# in CKA_EC_PARAMS; they report a PrintableString naming the curve instead
+# (e.g. ``edwards25519`` / ``curve25519``). Match either form.
+_ED25519_PRINTABLE = b"edwards25519"
+_X25519_PRINTABLE = b"curve25519"
 
 # PIV slot identifiers
 PIV_SLOTS = {
@@ -453,17 +458,21 @@ def has_ed25519_key(session, slot: str) -> bool:
         return False
 
     try:
-        # Query for public keys with Edwards curve
+        # Query all public keys. We deliberately do NOT filter by
+        # ``KeyType.EC_EDWARDS``: an X25519 key is ``CKK_EC_MONTGOMERY`` on
+        # standards-compliant tokens, so that filter would hide real keys.
         keys = list(session.get_objects({
             ObjectClass.PUBLIC_KEY: None,
-            KeyType.EC_EDWARDS: None,
         }))
 
         for key in keys:
             try:
-                # Check if this key's EC_PARAMS contains Ed25519 OID
+                # Match the Ed25519 OID or the PrintableString curve name.
                 ec_params = key.get(Attribute.EC_PARAMS)
-                if ec_params and _ED25519_OID in bytes(ec_params):
+                if not ec_params:
+                    continue
+                ec_params = bytes(ec_params)
+                if _ED25519_OID in ec_params or _ED25519_PRINTABLE in ec_params:
                     return True
             except Exception:
                 continue
@@ -488,17 +497,20 @@ def has_x25519_key(session, slot: str) -> bool:
         return False
 
     try:
-        # Query for public keys with Edwards curve
+        # Query all public keys (no KeyType filter -- X25519 is
+        # ``CKK_EC_MONTGOMERY``, which an ``EC_EDWARDS`` filter would exclude).
         keys = list(session.get_objects({
             ObjectClass.PUBLIC_KEY: None,
-            KeyType.EC_EDWARDS: None,
         }))
 
         for key in keys:
             try:
-                # Check if this key's EC_PARAMS contains X25519 OID
+                # Match the X25519 OID or the PrintableString curve name.
                 ec_params = key.get(Attribute.EC_PARAMS)
-                if ec_params and _X25519_OID in bytes(ec_params):
+                if not ec_params:
+                    continue
+                ec_params = bytes(ec_params)
+                if _X25519_OID in ec_params or _X25519_PRINTABLE in ec_params:
                     return True
             except Exception:
                 continue

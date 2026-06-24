@@ -1,7 +1,7 @@
 """
 Real hardware-only PKCS#11 integration tests (YubiKey PIV).
 
-These tests run against a physical YubiKey when ``PKCS11_TEST_TOKEN=hw`` and a
+These tests run against a physical YubiKey when ``PKCS11_TEST_TOKEN=yubikey`` and a
 hardware PKCS#11 provider (libykcs11) plus ``PKCS11_TEST_PIN`` are available.
 They skip cleanly in every other environment, so they are safe to collect
 anywhere.

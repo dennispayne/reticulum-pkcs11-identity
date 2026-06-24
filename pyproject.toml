@@ -5,11 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "reticulum-pkcs11-identity"
 version = "0.1.0"
-description = "PKCS#11-backed LXMF user identity support for Reticulum"
+description = "PKCS#11 hardware-backed identity support for Reticulum"
 readme = "README.md"
 license = { text = "MIT with non-harm clause (see LICENSE)" }
 requires-python = ">=3.10"
-keywords = ["reticulum", "lxmf", "pkcs11", "identity", "hardware", "hsm", "security"]
+keywords = ["reticulum", "pkcs11", "identity", "hardware", "hsm", "security"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -45,6 +45,7 @@ dev = [
 
 [project.scripts]
 rnidstatus = "reticulum_pkcs11_identity.cli:main"
+rnidsetup = "reticulum_pkcs11_identity.session_bootstrap:main"
 
 [project.urls]
 Homepage = "https://github.com/dennispayne/reticulum-pkcs11-identity"
@@ -74,10 +75,9 @@ markers = [
     "recovery: error-recovery tests",
     "threading: thread-safety tests",
     "monitor: token monitor tests",
-    "identity: LXMF user identity unit tests",
+    "identity: hardware identity unit tests",
     "discovery: token discovery tests",
     "lifecycle: backend lifecycle tests",
-    "lxmf: lxmf bootstrap/config tests",
     "session_manager: session manager integration tests",
     "integration: integration tests (slower, may require hardware)",
     "software: integration tests that run against a software token (SoftHSM2)",

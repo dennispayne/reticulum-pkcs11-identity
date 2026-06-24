@@ -1,6 +1,12 @@
 """
 App-to-PIV-slot mapper for multi-app identities.
 
+**EXPERIMENTAL (multi-identity).** This belongs to the opt-in multi-identity /
+per-app-slot feature. The production model is a single hardware identity used
+across apps via RNS aspects; this machinery is only active when
+``experimental_features`` + ``multi_identity`` are enabled in config. See
+:mod:`reticulum_pkcs11_identity.experimental`.
+
 Implements first-come-first-served slot allocation with persistence.
 Each app gets its own (or shared) PIV slot, ensuring multiple apps
 can have independent hardware-backed identities on the same YubiKey.
@@ -16,7 +22,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from .exceptions import (
+from ..exceptions import (
     SlotAlreadyOccupiedError,
     SlotNotFoundError,
     PKCS11ConfigError,

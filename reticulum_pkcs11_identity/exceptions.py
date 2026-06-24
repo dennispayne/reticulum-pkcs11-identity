@@ -77,3 +77,14 @@ class AppNotMappedError(PKCS11IdentityError):
 class PKCS11ProviderNotFoundError(PKCS11IdentityError):
     """Raised when no PKCS#11 provider module can be found."""
     pass
+
+
+class PKCS11ExperimentalDisabledError(PKCS11IdentityError):
+    """Raised when an experimental feature is used but not enabled in config.
+
+    Experimental features (e.g. multi-identity / per-app slots) require both
+    ``experimental_features`` and the specific feature flag (e.g.
+    ``multi_identity``) to be enabled in the ``[hardware_identity]`` config
+    section.
+    """
+    pass

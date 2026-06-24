@@ -13,7 +13,7 @@ import pytest
 import threading
 import time
 
-from reticulum_pkcs11_identity.app_identity import AppIdentityMapper
+from reticulum_pkcs11_identity.experimental.app_identity import AppIdentityMapper
 from reticulum_pkcs11_identity.backend import PKCS11Backend
 from reticulum_pkcs11_identity.identity import (
     make_app_hardware_identity_class,

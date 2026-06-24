@@ -33,10 +33,10 @@ pytest fixtures for the reticulum_pkcs11_identity test suite.
 
 Token selection:
   PKCS11_TEST_TOKEN environment variable controls which token to use:
-    'hw'       — Use real hardware (YubiKey). Requires PKCS11_TEST_PIN
+    'yubikey'  — Use real hardware (YubiKey). Requires PKCS11_TEST_PIN
     'softhsm'  — Use SoftHSM2 (default if not set or SoftHSM2 unavailable)
   
-  Example: PKCS11_TEST_TOKEN=hw PKCS11_TEST_PIN=123456 pytest tests/
+  Example: PKCS11_TEST_TOKEN=yubikey PKCS11_TEST_PIN=123456 pytest tests/
 
 A fresh SoftHSM2 token is initialised once per test session.  Two key pairs
 are generated on the token:
@@ -50,8 +50,8 @@ the selected token backend is not available.
 Environment variables:
   SOFTHSM2_MODULE       — path to libsofthsm2.so (auto-detected if not set)
   SOFTHSM2_CONF         — path to the softhsm2 configuration file (auto-created)
-  PKCS11_TEST_TOKEN     — 'hw' for hardware or 'softhsm' for SoftHSM2 (default: auto-detect)
-  PKCS11_TEST_PIN       — PIN for hardware token (user PIN, required if PKCS11_TEST_TOKEN=hw)
+  PKCS11_TEST_TOKEN     — 'yubikey' for hardware or 'softhsm' for SoftHSM2 (default: auto-detect)
+  PKCS11_TEST_PIN       — PIN for hardware token (user PIN, required if PKCS11_TEST_TOKEN=yubikey)
   PKCS11_TEST_LABEL     — Token label for hardware token (auto-detected if not set)
 """
 
@@ -61,6 +61,70 @@ import subprocess
 import tempfile
 
 import pytest
+
+# ----- .env loading -------------------------------------------------------
+#
+# Every fixture below reads its token configuration (PKCS11_TEST_TOKEN,
+# PKCS11_TEST_PIN, PKCS11_TEST_LABEL, ...) from ``os.environ``. VS Code's
+# Testing UI injects those from ``.vscode/.env`` via the ``python.envFile``
+# setting, but a plain ``pytest`` run from a terminal -- and the shell tasks in
+# ``.vscode/tasks.json`` -- do not. Load the same env file(s) here so the suite
+# honours ``.vscode/.env`` no matter how it is launched.
+#
+# Variables already present in the process environment always win
+# (``override=False`` semantics), so an explicit ``PKCS11_TEST_TOKEN=yubikey`` on
+# the command line, in a task's ``env`` block, or exported by CI still takes
+# precedence over the file.
+
+
+def _load_env_file(path: str) -> None:
+    """Populate ``os.environ`` from a simple ``KEY=VALUE`` .env file.
+
+    Existing environment variables are never overwritten. Missing files are
+    ignored. Supports ``#`` comments, blank lines, an optional ``export``
+    prefix, and a single pair of surrounding quotes around the value.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            lines = fh.readlines()
+    except OSError:
+        return
+
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        key, sep, value = line.partition("=")
+        if not sep:
+            continue
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+def _load_dotenv_files() -> None:
+    """Load ``.vscode/.env`` then a repo-root ``.env``, if present.
+
+    ``.vscode/.env`` is loaded first and wins (``override=False``), matching the
+    ``python.envFile`` value committed in ``.vscode/settings.json``.
+    """
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for candidate in (
+        os.path.join(repo_root, ".vscode", ".env"),
+        os.path.join(repo_root, ".env"),
+    ):
+        _load_env_file(candidate)
+
+
+# Run at import time so the env is populated before any fixture (or
+# collection-time ``skipif``) reads ``os.environ``.
+_load_dotenv_files()
+
 
 # ----- Paths and constants ------------------------------------------------
 
@@ -161,20 +225,48 @@ PIV_SLOT_KEY_LABELS = {
 def _add_yubico_dll_dir(provider_path: str) -> None:
     """Make libykcs11's sibling dependency DLLs loadable on Windows.
 
-    ``libykcs11.dll`` depends on ``libcrypto-3-x64.dll`` / ``libykpiv.dll`` that
-    live in the same directory. Without adding that directory to the DLL search
-    path, ``pkcs11.lib(...)`` fails with "The specified module could not be
-    found". This is a no-op on non-Windows platforms.
+    ``libykcs11.dll`` depends on ``libcrypto-3-x64.dll`` / ``libykpiv.dll`` /
+    ``zlib1.dll`` that live in the same directory. On some Windows + Python
+    builds (observed on CPython 3.14) merely adding that directory to the DLL
+    search path is not enough for the *transitive* dependency resolution, and
+    ``pkcs11.lib(...)`` fails with "The specified module could not be found".
+
+    To be robust we (a) add the directory to the DLL search path, (b) prepend it
+    to ``PATH``, and (c) eagerly load the sibling DLLs with ``ctypes`` so they
+    are already resident in the process when libykcs11 is loaded. This is a
+    no-op on non-Windows platforms.
     """
-    add_dll_directory = getattr(os, "add_dll_directory", None)
-    if add_dll_directory is None:
+    if os.name != "nt":
         return
     directory = os.path.dirname(provider_path)
-    if directory and os.path.isdir(directory):
+    if not directory or not os.path.isdir(directory):
+        return
+
+    add_dll_directory = getattr(os, "add_dll_directory", None)
+    if add_dll_directory is not None:
         try:
             add_dll_directory(directory)
         except OSError:
             pass
+
+    os.environ["PATH"] = directory + os.pathsep + os.environ.get("PATH", "")
+
+    import ctypes
+
+    for _dep in ("zlib1.dll", "libcrypto-3-x64.dll", "libykpiv.dll"):
+        dep_path = os.path.join(directory, _dep)
+        if os.path.exists(dep_path):
+            try:
+                ctypes.WinDLL(dep_path)
+            except OSError:
+                pass
+
+
+# Recognised PKCS11_TEST_TOKEN values that select a real *hardware* token. Each
+# names a specific device so the convention stays open to other hardware -- add
+# new identifiers here (e.g. "nitrokey") as backends gain support. They all map
+# to the generic "hw" (hardware) backend category the fixtures switch on below.
+_HARDWARE_TOKEN_VALUES = {"yubikey"}
 
 
 def _get_test_token_backend() -> str:
@@ -182,23 +274,24 @@ def _get_test_token_backend() -> str:
     Determine which token backend to use for tests.
     
     Returns:
-        'hw' if hardware token should be used
+        'hw' (generic hardware category) if a hardware token should be used,
+            e.g. PKCS11_TEST_TOKEN=yubikey
         'softhsm' if SoftHSM2 should be used
         Raises pytest.skip() if neither is available
     """
     requested = os.environ.get("PKCS11_TEST_TOKEN", "").lower()
     
-    if requested == "hw":
-        # User explicitly requested hardware token
+    if requested in _HARDWARE_TOKEN_VALUES:
+        # User explicitly requested a hardware token (e.g. yubikey)
         if not os.environ.get("PKCS11_TEST_PIN"):
             pytest.skip(
-                "PKCS11_TEST_TOKEN=hw but PKCS11_TEST_PIN not set. "
-                "Set PKCS11_TEST_PIN=<pin> to use hardware token."
+                f"PKCS11_TEST_TOKEN={requested} but PKCS11_TEST_PIN not set. "
+                "Set PKCS11_TEST_PIN=<pin> to use the hardware token."
             )
         if _find_hardware_token_provider() is None:
             pytest.skip(
-                "PKCS11_TEST_TOKEN=hw but no hardware PKCS#11 provider found. "
-                "Ensure YubiKey is plugged in and libykcs11 is installed."
+                f"PKCS11_TEST_TOKEN={requested} but no hardware PKCS#11 provider "
+                "found. Ensure YubiKey is plugged in and libykcs11 is installed."
             )
         return "hw"
     
@@ -208,7 +301,7 @@ def _get_test_token_backend() -> str:
             pytest.skip("PKCS11_TEST_TOKEN=softhsm but SoftHSM2 is not installed")
         return "softhsm"
     
-    # Auto-detect: prefer SoftHSM2 for safety, fall back to hw if available
+    # Auto-detect: prefer SoftHSM2 for safety, fall back to hardware if available
     if _find_softhsm_module() is not None:
         return "softhsm"
     
@@ -218,7 +311,7 @@ def _get_test_token_backend() -> str:
     
     pytest.skip(
         "No PKCS#11 token available. Either install SoftHSM2 or set "
-        "PKCS11_TEST_TOKEN=hw with PKCS11_TEST_PIN=<pin> for hardware token."
+        "PKCS11_TEST_TOKEN=yubikey with PKCS11_TEST_PIN=<pin> for a hardware token."
     )
 
 
@@ -309,7 +402,7 @@ def pkcs11_backend(request):
     keys persist on the token across tests.
 
     Token selection is determined by PKCS11_TEST_TOKEN environment variable:
-      - 'hw': Use real hardware (YubiKey) - requires PKCS11_TEST_PIN
+      - 'yubikey': Use real hardware (YubiKey) - requires PKCS11_TEST_PIN
       - 'softhsm': Use SoftHSM2 (default)
       - Not set: Auto-detect (prefer SoftHSM2)
 
@@ -404,7 +497,7 @@ def hardware_token_params(request):
     hardware. The YubiKey's *content* is treated as disposable, but the
     hardware itself must never be locked or bricked, so this fixture:
 
-      * Only activates when ``PKCS11_TEST_TOKEN=hw`` and a hardware provider
+      * Only activates when ``PKCS11_TEST_TOKEN=yubikey`` and a hardware provider
         (libykcs11) plus ``PKCS11_TEST_PIN`` are available; it skips otherwise.
       * Reads the token's PIN flags WITHOUT authenticating and skips if the PIN
         is locked or on its final try, so the suite never consumes the last
@@ -422,7 +515,7 @@ def hardware_token_params(request):
     Yields a dict: ``{"module", "label", "pin", "dll_dir"}``.
     """
     if _get_test_token_backend() != "hw":
-        pytest.skip("Hardware tests require PKCS11_TEST_TOKEN=hw")
+        pytest.skip("Hardware tests require PKCS11_TEST_TOKEN=yubikey")
 
     provider = _find_hardware_token_provider()
     if provider is None:
@@ -508,7 +601,7 @@ def pytest_configure(config):
         return
     
     # Only auto-initialize if we're using SoftHSM2 (not explicitly using hardware)
-    if os.environ.get("PKCS11_TEST_TOKEN", "").lower() == "hw":
+    if os.environ.get("PKCS11_TEST_TOKEN", "").lower() in _HARDWARE_TOKEN_VALUES:
         return
     
     # Check if SoftHSM2 is available

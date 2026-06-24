@@ -12,7 +12,7 @@ pytest tests/ -v
 
 ### Hardware: YubiKey with User PIN
 ```bash
-export PKCS11_TEST_TOKEN=hw
+export PKCS11_TEST_TOKEN=yubikey
 export PKCS11_TEST_PIN=123456
 pytest tests/ -v
 ```
@@ -27,8 +27,8 @@ pytest tests/ -v
 
 | Variable | Purpose | Example | Required |
 |----------|---------|---------|----------|
-| `PKCS11_TEST_TOKEN` | Token backend selection | `hw` or `softhsm` | No (auto-detect) |
-| `PKCS11_TEST_PIN` | User PIN for hardware token | `123456` | Yes if `PKCS11_TEST_TOKEN=hw` |
+| `PKCS11_TEST_TOKEN` | Token backend selection | `yubikey` or `softhsm` | No (auto-detect) |
+| `PKCS11_TEST_PIN` | User PIN for hardware token | `123456` | Yes if `PKCS11_TEST_TOKEN=yubikey` |
 | `PKCS11_TEST_LABEL` | Token label for hardware | Auto-detected | No (auto-detected) |
 | `PKCS11_TEST_ADMIN_PIN` | Admin PIN (if needed) | `12345678` | No |
 
@@ -37,7 +37,7 @@ pytest tests/ -v
 ### Token Selection Priority
 
 1. **Explicit Request**: If `PKCS11_TEST_TOKEN` is set:
-   - `hw`: Use hardware token (requires PIN)
+   - `yubikey`: Use hardware token (requires PIN)
    - `softhsm`: Use SoftHSM2
 
 2. **Auto-Detect** (default):
@@ -52,7 +52,7 @@ pytest tests/ -v
 **Local Dev with Both Installed** → Uses SoftHSM2 by default (safer)
 ```bash
 # Explicitly test against hardware
-PKCS11_TEST_TOKEN=hw PKCS11_TEST_PIN=123456 pytest tests/
+PKCS11_TEST_TOKEN=yubikey PKCS11_TEST_PIN=123456 pytest tests/
 ```
 
 **Local Dev with Only Hardware** → Auto-detects YubiKey if PIN is set
@@ -65,7 +65,7 @@ PKCS11_TEST_PIN=123456 pytest tests/
 
 ### Windows: Test against YubiKey 5C Nano
 ```powershell
-$env:PKCS11_TEST_TOKEN = "hw"
+$env:PKCS11_TEST_TOKEN = "yubikey"
 $env:PKCS11_TEST_PIN = "123456"
 .\.venv\Scripts\python.exe -m pytest tests/ -v
 ```
@@ -89,7 +89,7 @@ python -m pytest tests/ -v
 pytest tests/ -v
 
 # Later, test against YubiKey
-PKCS11_TEST_TOKEN=hw PKCS11_TEST_PIN=123456 pytest tests/ -v
+PKCS11_TEST_TOKEN=yubikey PKCS11_TEST_PIN=123456 pytest tests/ -v
 ```
 
 ## What Each Test Sees
@@ -112,7 +112,7 @@ PKCS11_TEST_TOKEN=hw PKCS11_TEST_PIN=123456 pytest tests/ -v
 ```python
 @pytest.fixture(scope="session")
 def pkcs11_backend(request):
-    # Selects the token based on PKCS11_TEST_TOKEN (hw / softhsm / auto).
+    # Selects the token based on PKCS11_TEST_TOKEN (yubikey / softhsm / auto).
     # SoftHSM2 fixtures are pulled in lazily, so selecting hardware does NOT
     # spuriously skip with a "SoftHSM2 is not installed" message.
     # In hw mode the shared (generative) token suite skips cleanly and never
@@ -140,7 +140,7 @@ tests/
   unit/                     # pure-Python, no token; runs everywhere
   integration/
     software/               # SoftHSM2 generative suite (Linux/WSL/CI)
-    hardware/               # real YubiKey; opt-in via PKCS11_TEST_TOKEN=hw
+    hardware/               # real YubiKey; opt-in via PKCS11_TEST_TOKEN=yubikey
   e2e/                      # full Reticulum end-to-end
     _rns_peer.py            # standalone peer process (underscore = not collected)
     test_two_instance_e2e.py
@@ -217,7 +217,7 @@ token-backed identity can **accept** links, not just initiate them.
 
 ## Troubleshooting
 
-### "PKCS11_TEST_TOKEN=hw but PKCS11_TEST_PIN not set"
+### "PKCS11_TEST_TOKEN=yubikey but PKCS11_TEST_PIN not set"
 ```bash
 # Add the PIN
 export PKCS11_TEST_PIN=123456
@@ -231,7 +231,7 @@ pytest tests/
 
 ### "SoftHSM2 is not installed"
 - Install: `scripts/install_test_deps.sh`
-- Or explicitly use hardware: `PKCS11_TEST_TOKEN=hw PKCS11_TEST_PIN=123456 pytest`
+- Or explicitly use hardware: `PKCS11_TEST_TOKEN=yubikey PKCS11_TEST_PIN=123456 pytest`
 
 ### Tests skip when I expected them to run
 - Check PIN is correct: `echo $PKCS11_TEST_PIN`
@@ -264,7 +264,7 @@ GitHub Actions example:
 - name: Run tests with YubiKey
   if: runner.os == 'Linux' && contains(runner.labels, 'has-yubikey')
   env:
-    PKCS11_TEST_TOKEN: hw
+    PKCS11_TEST_TOKEN: yubikey
     PKCS11_TEST_PIN: ${{ secrets.YUBIKEY_PIN }}
   run: python -m pytest tests/ -v
 ```
@@ -280,14 +280,14 @@ def test_my_feature(pkcs11_backend):
     # For hardware-only tests, use a marker:
     @pytest.mark.hardware
     def test_yubikey_specific():
-        # Only runs with PKCS11_TEST_TOKEN=hw
+        # Only runs with PKCS11_TEST_TOKEN=yubikey
 ```
 
 ## Next Steps
 
 1. **Local Testing**: Run against SoftHSM2 during dev
 2. **Pre-commit**: Run `pytest tests/` to verify
-3. **Hardware Testing**: Before shipping, test with `PKCS11_TEST_TOKEN=hw`
+3. **Hardware Testing**: Before shipping, test with `PKCS11_TEST_TOKEN=yubikey`
 4. **CI**: Automated tests use SoftHSM2 by default
 5. **Production**: Users test with their own YubiKey
 
@@ -295,7 +295,7 @@ def test_my_feature(pkcs11_backend):
 
 **Example Test Run on Real Hardware:**
 ```
-$ PKCS11_TEST_TOKEN=hw PKCS11_TEST_PIN=123456 pytest tests/ -v
+$ PKCS11_TEST_TOKEN=yubikey PKCS11_TEST_PIN=123456 pytest tests/ -v
 ...
 ================ 305 passed, 96 skipped, 35 warnings in 8.23s =================
 ```

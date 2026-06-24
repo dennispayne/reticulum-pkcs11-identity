@@ -7,8 +7,8 @@ import os
 import pytest
 from unittest.mock import MagicMock, create_autospec, patch
 
-import reticulum_pkcs11_identity.transparent_identity as ti
-from reticulum_pkcs11_identity.transparent_identity import (
+import reticulum_pkcs11_identity.experimental.transparent_identity as ti
+from reticulum_pkcs11_identity.experimental.transparent_identity import (
     TransparentHardwareIdentityFactory,
     get_or_create_hardware_identity,
     is_app_using_hardware,

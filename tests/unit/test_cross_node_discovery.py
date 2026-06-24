@@ -15,7 +15,7 @@ from reticulum_pkcs11_identity.cross_node_discovery import (
     discover_identity_on_token,
     CrossNodeIdentityResolver,
 )
-from reticulum_pkcs11_identity.app_identity import AppIdentityMapper
+from reticulum_pkcs11_identity.experimental.app_identity import AppIdentityMapper
 
 
 class TestPublicKeyExtraction:

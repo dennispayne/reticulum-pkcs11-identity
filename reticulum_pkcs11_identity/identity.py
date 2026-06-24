@@ -28,17 +28,19 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-"""Multi-app hardware identity factory for Reticulum.
+"""Hardware identity factory for Reticulum.
 
-This module provides hardware-backed identity creation for RNS.Identity,
-supporting both LXMF-specific identities (backward compat) and multi-app
-identities via PIV slots on PKCS#11 tokens like YubiKey.
+This module provides hardware-backed identity creation for RNS.Identity. The
+production model is a single hardware identity that every app shares (distinct
+per-app addresses come from RNS aspects, not from separate keys). An opt-in,
+experimental multi-app model (one keypair per app, in its own PKCS#11/PIV slot)
+also lives here.
 
 Key functions:
-  - make_lxmf_identity_class(): Original factory (backward compat)
-  - make_app_hardware_identity_class(): Multi-app factory
-  - create_app_hardware_identity(): Convenience utility
-  - get_app_identity_keys(): Query keys for an app
+  - make_hardware_identity_class(): Hardware-backed identity factory
+  - make_app_hardware_identity_class(): Multi-app factory (experimental)
+  - create_app_hardware_identity(): Convenience utility (experimental)
+  - get_app_identity_keys(): Query keys for an app (experimental)
 """
 
 import os
@@ -115,7 +117,7 @@ class _TokenResidentPrivateKey:
 _TOKEN_RESIDENT_PRV = _TokenResidentPrivateKey()
 
 
-def make_lxmf_identity_class(
+def make_hardware_identity_class(
     backend: PKCS11Backend,
     sign_key_label: str,
     enc_key_label: str,
@@ -126,8 +128,8 @@ def make_lxmf_identity_class(
     Factory that produces a *HardwareIdentity* class pre-bound to *backend*.
 
     This is the correct way to instantiate HardwareIdentity — call this factory
-    once during application setup and use the returned class for your explicit
-    LXMF user identity object.
+    once during application setup and use the returned class for your RNS user
+    identity object.
 
     :param backend: An already-opened :class:`~.backend.PKCS11Backend`.
     :param sign_key_label: PKCS#11 label of the Ed25519 signing private key.
@@ -497,20 +499,25 @@ def make_lxmf_identity_class(
                 f"hash={self.hexhash or 'unknown'}>"
             )
 
-    HardwareIdentity.__name__ = "LXMFIdentity"
-    HardwareIdentity.__qualname__ = "LXMFIdentity"
+    HardwareIdentity.__name__ = "HardwareIdentity"
+    HardwareIdentity.__qualname__ = "HardwareIdentity"
     return HardwareIdentity
 
 
-def make_hardware_identity_class(
+def make_lxmf_identity_class(
     backend: PKCS11Backend,
     sign_key_label: str,
     enc_key_label: str,
     sign_key_id: bytes | None = None,
     enc_key_id: bytes | None = None,
 ) -> type:
-    """Backward-compatible alias for :func:`make_lxmf_identity_class`."""
-    return make_lxmf_identity_class(
+    """Deprecated alias for :func:`make_hardware_identity_class`.
+
+    The hardware identity is generic and shared across apps via RNS aspects; it
+    is not specific to LXMF. New code should call
+    :func:`make_hardware_identity_class`.
+    """
+    return make_hardware_identity_class(
         backend=backend,
         sign_key_label=sign_key_label,
         enc_key_label=enc_key_label,
@@ -518,6 +525,19 @@ def make_hardware_identity_class(
         enc_key_id=enc_key_id,
     )
 
+
+# ============================================================================
+# EXPERIMENTAL: multi-identity / per-app slots
+#
+# The factories below implement the opt-in multi-identity model (one keypair
+# per app, in its own PIV slot). They are surfaced via
+# ``reticulum_pkcs11_identity.experimental`` and are NOT part of the production
+# single-identity API (production uses make_hardware_identity_class + RNS aspects).
+# They are kept here -- rather than moved into the experimental subpackage --
+# only because they are tightly coupled to this module's HardwareIdentity
+# internals; relocating them would force experimental code to import core
+# private helpers, which would be worse spaghetti than this banner.
+# ============================================================================
 
 def make_app_hardware_identity_class(
     app_name: str,
@@ -561,7 +581,7 @@ def make_app_hardware_identity_class(
     # Auto-lookup slot via AppIdentityMapper if needed
     if slot is None:
         try:
-            from .app_identity import AppIdentityMapper
+            from .experimental.app_identity import AppIdentityMapper
             mapper = AppIdentityMapper()
             slot = mapper.get_app_slot(app_name)
             if slot is None:
@@ -997,7 +1017,7 @@ def get_app_identity_keys(app_name: str, backend: Optional[PKCS11Backend] = None
         if backend is None:
             raise PKCS11BackendError("Backend must be provided explicitly")
         
-        from .app_identity import AppIdentityMapper
+        from .experimental.app_identity import AppIdentityMapper
 
         if slot is None:
             mapper = AppIdentityMapper()

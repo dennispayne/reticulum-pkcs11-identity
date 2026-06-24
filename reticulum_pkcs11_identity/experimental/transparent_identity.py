@@ -1,6 +1,12 @@
 """
 Transparent hardware identity for multi-app Reticulum flows.
 
+**EXPERIMENTAL (multi-identity).** Part of the opt-in multi-identity feature.
+The entry point :func:`get_or_create_hardware_identity` returns ``None`` unless
+``experimental_features`` + ``multi_identity`` are enabled in config, so the
+production default (one hardware identity + RNS aspects) is unaffected. See
+:mod:`reticulum_pkcs11_identity.experimental`.
+
 ZERO-CONFIG PRINCIPLE: Apps make zero changes. This module provides
 transparent hardware-backing that works automatically when:
   1. A YubiKey is plugged in
@@ -14,10 +20,10 @@ No exceptions, no drama.
 from typing import Optional
 
 from .app_identity import AppIdentityMapper
-from .backend_piv import PKCS11PIVBackend
-from .config import PKCS11Config, load_hardware_identity_config
-from .pkcs11_provider import get_default_provider
-from .exceptions import PKCS11ProviderNotFoundError
+from ..backend_piv import PKCS11PIVBackend
+from ..config import PKCS11Config, load_hardware_identity_config, multi_identity_enabled
+from ..pkcs11_provider import get_default_provider
+from ..exceptions import PKCS11ProviderNotFoundError
 
 
 class TransparentHardwareIdentityFactory:
@@ -174,7 +180,7 @@ def get_or_create_hardware_identity(app_name: str) -> Optional[TransparentHardwa
         TransparentHardwareIdentityFactory if hardware is ready, None otherwise
 
     Usage (for app developers - zero changes needed):
-        from reticulum_pkcs11_identity import get_or_create_hardware_identity
+        from reticulum_pkcs11_identity.experimental import get_or_create_hardware_identity
 
         # Try to get hardware identity
         hw_identity = get_or_create_hardware_identity("sideband")
@@ -190,6 +196,11 @@ def get_or_create_hardware_identity(app_name: str) -> Optional[TransparentHardwa
             # Hardware not available - use software as usual
             identity = my_create_software_identity()
     """
+    # EXPERIMENTAL gate: stay inert (return None -> caller uses software) unless
+    # the multi-identity feature is explicitly enabled in config.
+    if not multi_identity_enabled():
+        return None
+
     factory = TransparentHardwareIdentityFactory(app_name)
     if factory.try_setup_hardware():
         return factory

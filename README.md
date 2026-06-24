@@ -78,8 +78,11 @@ That's it. The module auto-detects your hardware token.
 enabled = true
 provider = libykcs11              # Leave blank to auto-detect
 token_label = YubiKey PIV #12345  # Optional: specify which token
-pin_env = MY_TOKEN_PIN            # Optional: read PIN from env var instead of prompting
 ```
+
+The token PIN is never written to the config file. You are prompted for it when
+a session starts — or it is entered on the token's own PIN pad, if the token
+has one.
 
 ### Step 3: Use your apps
 

@@ -19,8 +19,8 @@ import unittest.mock as mock
 import pytest
 
 from reticulum_pkcs11_identity.config import PKCS11Config, load_hardware_identity_config
-from reticulum_pkcs11_identity.app_identity import AppIdentityMapper, PIV_SLOTS
-from reticulum_pkcs11_identity.transparent_identity import TransparentHardwareIdentityFactory
+from reticulum_pkcs11_identity.experimental.app_identity import AppIdentityMapper, PIV_SLOTS
+from reticulum_pkcs11_identity.experimental.transparent_identity import TransparentHardwareIdentityFactory
 from reticulum_pkcs11_identity.token_monitor import TokenMonitor
 from reticulum_pkcs11_identity.pkcs11_provider import (
     discover_providers,

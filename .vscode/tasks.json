@@ -63,7 +63,7 @@
         "isDefault": true
       },
       "problemMatcher": [],
-      "detail": "Default: uses SoftHSM2. Set PKCS11_TEST_TOKEN=hw to test with YubiKey."
+      "detail": "Default: uses SoftHSM2. Set PKCS11_TEST_TOKEN=yubikey to test with YubiKey."
     },
     {
       "label": "Tests: Run all (quick, no verbose)",
@@ -202,7 +202,7 @@
           "-v"
         ],
         "env": {
-          "PKCS11_TEST_TOKEN": "hw"
+          "PKCS11_TEST_TOKEN": "yubikey"
         }
       },
       "args": [
@@ -212,7 +212,7 @@
         "-v"
       ],
       "env": {
-        "PKCS11_TEST_TOKEN": "hw"
+        "PKCS11_TEST_TOKEN": "yubikey"
       },
       "group": "test",
       "problemMatcher": [],

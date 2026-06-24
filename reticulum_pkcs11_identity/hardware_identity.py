@@ -1,4 +1,15 @@
-"""LXMF-focused PKCS#11 identity bootstrap helpers."""
+"""Hardware-backed RNS identity bootstrap helpers.
+
+The hardware identity is generic: a single token-resident keypair (Ed25519 for
+signing, X25519 for encryption) that every Reticulum app shares. Distinct
+per-app addresses come from RNS aspects, not from separate keys, so nothing
+here is specific to any one app (such as LXMF).
+
+The token PIN is never read from or written to a configuration file. It is
+collected at session start -- by the token's own PIN pad if it has one
+(protected authentication path), otherwise by an interactive prompt or a PIN
+supplied programmatically by the caller.
+"""
 
 from __future__ import annotations
 
@@ -11,19 +22,17 @@ from .exceptions import PKCS11KeyNotFoundError
 
 
 @dataclass(frozen=True)
-class LXMFHardwareIdentityConfig:
+class HardwareIdentityConfig:
     module_path: str
     token_label: str
-    sign_key_label: str = "lxmf-sign"
-    enc_key_label: str = "lxmf-enc"
+    sign_key_label: str = "rns-sign"
+    enc_key_label: str = "rns-enc"
     sign_key_id: bytes | None = None
     enc_key_id: bytes | None = None
-    pin: str | None = None
-    pin_env: str = "LXMF_PKCS11_PIN"
 
 
 @dataclass
-class LXMFHardwareIdentityHandle:
+class HardwareIdentityHandle:
     backend: PKCS11Backend
     identity: object
 
@@ -54,7 +63,13 @@ def _resolve_key_id(value: str | None) -> bytes | None:
     return stripped.encode() if stripped else None
 
 
-def load_lxmf_hardware_identity_config(config_path: str | None = None) -> LXMFHardwareIdentityConfig | None:
+def load_hardware_identity_binding(config_path: str | None = None) -> HardwareIdentityConfig | None:
+    """Read the token/key binding from the ``[hardware_identity]`` config section.
+
+    Returns ``None`` when no Reticulum config file is found or the section does
+    not name both a provider module and a token label. A PIN is never read from
+    the config file -- it is collected at session start.
+    """
     parser = configparser.ConfigParser()
     path = config_path
     if path is None:
@@ -66,39 +81,26 @@ def load_lxmf_hardware_identity_config(config_path: str | None = None) -> LXMFHa
         return None
 
     parser.read(path)
-    if not parser.has_section("lxmf_pkcs11_identity"):
+    if not parser.has_section("hardware_identity"):
         return None
 
-    section = parser["lxmf_pkcs11_identity"]
-    module_path = section.get("module", fallback="").strip()
+    section = parser["hardware_identity"]
+    module_path = section.get("provider", fallback="").strip()
     token_label = section.get("token_label", fallback="").strip()
     if not module_path or not token_label:
         return None
 
-    pin_env = section.get("pin_env", fallback="LXMF_PKCS11_PIN").strip() or "LXMF_PKCS11_PIN"
-    pin_value = section.get("pin", fallback=None)
-
-    return LXMFHardwareIdentityConfig(
+    return HardwareIdentityConfig(
         module_path=module_path,
         token_label=token_label,
-        sign_key_label=section.get("sign_key_label", fallback="lxmf-sign").strip() or "lxmf-sign",
-        enc_key_label=section.get("enc_key_label", fallback="lxmf-enc").strip() or "lxmf-enc",
+        sign_key_label=section.get("sign_key_label", fallback="rns-sign").strip() or "rns-sign",
+        enc_key_label=section.get("enc_key_label", fallback="rns-enc").strip() or "rns-enc",
         sign_key_id=_resolve_key_id(section.get("sign_key_id", fallback=None)),
         enc_key_id=_resolve_key_id(section.get("enc_key_id", fallback=None)),
-        pin=pin_value.strip() if isinstance(pin_value, str) else None,
-        pin_env=pin_env,
     )
 
 
-def _resolve_pin(config: LXMFHardwareIdentityConfig, explicit_pin: str | None) -> str | None:
-    if explicit_pin is not None:
-        return explicit_pin
-    if config.pin is not None:
-        return config.pin
-    return os.environ.get(config.pin_env)
-
-
-def _ensure_lxmf_keys(backend: PKCS11Backend, config: LXMFHardwareIdentityConfig) -> None:
+def _ensure_keys(backend: PKCS11Backend, config: HardwareIdentityConfig) -> None:
     try:
         backend.get_public_key_bytes(key_label=config.sign_key_label)
     except PKCS11KeyNotFoundError:
@@ -109,27 +111,33 @@ def _ensure_lxmf_keys(backend: PKCS11Backend, config: LXMFHardwareIdentityConfig
         backend.generate_x25519_keypair(label=config.enc_key_label, key_id=config.enc_key_id)
 
 
-def create_lxmf_hardware_identity(
-    config: LXMFHardwareIdentityConfig,
+def create_hardware_identity(
+    config: HardwareIdentityConfig,
     *,
     pin: str | None = None,
     pin_callback=None,
     ensure_keys: bool = True,
-) -> LXMFHardwareIdentityHandle:
+) -> HardwareIdentityHandle:
+    """Open the token and build the hardware-backed RNS identity.
+
+    The PIN is resolved by the backend at session start (the token's own PIN
+    pad, an interactive prompt, or the optional *pin* / *pin_callback* supplied
+    by the caller). It is never read from configuration.
+    """
     backend = PKCS11Backend(module_path=config.module_path, token_label=config.token_label)
     backend.open_session(
-        pin=_resolve_pin(config, pin),
+        pin=pin,
         pin_callback=pin_callback,
-        prompt=f"PIN for LXMF PKCS#11 token '{config.token_label}': ",
+        prompt=f"PIN for PKCS#11 token '{config.token_label}': ",
     )
 
     try:
         if ensure_keys:
-            _ensure_lxmf_keys(backend, config)
+            _ensure_keys(backend, config)
 
-        from .identity import make_lxmf_identity_class
+        from .identity import make_hardware_identity_class
 
-        identity_class = make_lxmf_identity_class(
+        identity_class = make_hardware_identity_class(
             backend=backend,
             sign_key_label=config.sign_key_label,
             enc_key_label=config.enc_key_label,
@@ -137,7 +145,7 @@ def create_lxmf_hardware_identity(
             enc_key_id=config.enc_key_id,
         )
         identity = identity_class(create_keys=True)
-        return LXMFHardwareIdentityHandle(backend=backend, identity=identity)
+        return HardwareIdentityHandle(backend=backend, identity=identity)
     except Exception:
         backend.close()
         raise

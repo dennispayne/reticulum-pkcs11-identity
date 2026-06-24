@@ -49,6 +49,7 @@ from enum import Enum
 
 import pkcs11
 from pkcs11 import KeyType, Mechanism, ObjectClass, Attribute
+from pkcs11.constants import TokenFlag
 from pkcs11.mechanisms import KDF
 
 from .exceptions import (
@@ -92,6 +93,28 @@ def _load_pkcs11_lib_with_windows_fix(module_path: str):
         original_path = os.environ.get('PATH', '')
         try:
             os.environ['PATH'] = f"{provider_dir};{original_path}"
+
+            add_dll_directory = getattr(os, "add_dll_directory", None)
+            if add_dll_directory is not None and os.path.isdir(provider_dir):
+                try:
+                    add_dll_directory(provider_dir)
+                except OSError:
+                    pass
+
+            # Eagerly load libykcs11's sibling dependency DLLs so transitive
+            # resolution succeeds even when search-path changes are not honoured
+            # for indirect dependencies (observed on CPython 3.14, where merely
+            # adding the directory was no longer sufficient).
+            import ctypes
+
+            for _dep in ("zlib1.dll", "libcrypto-3-x64.dll", "libykpiv.dll"):
+                dep_path = os.path.join(provider_dir, _dep)
+                if os.path.exists(dep_path):
+                    try:
+                        ctypes.WinDLL(dep_path)
+                    except OSError:
+                        pass
+
             return pkcs11.lib(module_path)
         finally:
             os.environ['PATH'] = original_path
@@ -132,6 +155,81 @@ def raw_to_ec_point(raw: bytes) -> bytes:
     if len(raw) != 32:
         raise PKCS11BackendError(f"Expected 32-byte raw key, got {len(raw)} bytes")
     return _EC_POINT_PREFIX + raw
+
+
+# CKK_EC_MONTGOMERY (X25519/X448) — PKCS#11 v3.0 key type 0x41.
+_CKK_EC_MONTGOMERY = 0x41
+
+
+def _ensure_ec_montgomery_keytype() -> None:
+    """Teach python-pkcs11's ``KeyType`` enum about ``CKK_EC_MONTGOMERY``.
+
+    python-pkcs11 (through its latest release, 0.9.4) does not define
+    ``CKK_EC_MONTGOMERY`` (0x41) — the key type a standards-compliant token such
+    as a YubiKey PIV slot (via libykcs11) reports for an X25519 key. Without it,
+    *any* read of such a key's ``CKA_KEY_TYPE`` — including the read performed
+    internally by ``derive_key`` — raises ``ValueError: 65 is not a valid
+    KeyType`` and ECDH cannot run. Registering the member is idempotent and a
+    no-op on builds that already know the type.
+    """
+    if _CKK_EC_MONTGOMERY in KeyType._value2member_map_:
+        return
+    member = int.__new__(KeyType, _CKK_EC_MONTGOMERY)
+    member._name_ = "EC_MONTGOMERY"
+    member._value_ = _CKK_EC_MONTGOMERY
+    KeyType._value2member_map_[_CKK_EC_MONTGOMERY] = member
+    KeyType._member_map_["EC_MONTGOMERY"] = member
+    try:
+        KeyType._member_names_.append("EC_MONTGOMERY")
+    except (AttributeError, TypeError):  # pragma: no cover - enum internals vary
+        pass
+
+
+_ensure_ec_montgomery_keytype()
+
+
+def _derive_shared_secret(prv, peer_point_der: bytes):
+    """Run ``CKM_ECDH1_DERIVE`` on *prv* and return the derived secret-key object.
+
+    Handles two token behaviours from a single call site:
+
+    * **SoftHSM2** (and tokens that classify X25519 as ``CKK_EC_EDWARDS`` and
+      set ``CKA_DERIVE=True``): python-pkcs11 attaches ``DeriveMixin`` and the
+      peer value is supplied as a DER ``EC_POINT`` (``04 20`` + 32 raw bytes).
+    * **YubiKey PIV via libykcs11**: the X25519 key is ``CKK_EC_MONTGOMERY`` and
+      libykcs11 reports ``CKA_DERIVE=False``, so python-pkcs11's object factory
+      omits ``DeriveMixin`` and the object has no ``derive_key``. We invoke the
+      implementation directly and pass the **raw 32-byte** peer value, which
+      libykcs11 requires (it rejects the DER form with
+      ``CKR_MECHANISM_PARAM_INVALID``).
+    """
+    template = {Attribute.SENSITIVE: False, Attribute.EXTRACTABLE: True}
+    if hasattr(prv, "derive_key"):
+        return prv.derive_key(
+            KeyType.GENERIC_SECRET,
+            32 * 8,
+            mechanism_param=(KDF.NULL, None, peer_point_der),
+            mechanism=Mechanism.ECDH1_DERIVE,
+            store=False,
+            template=template,
+        )
+    # libykcs11 path: force the (otherwise omitted) derive implementation and
+    # hand it the raw 32-byte peer point.
+    from pkcs11._pkcs11 import DeriveMixin
+    raw_peer = (
+        peer_point_der[2:]
+        if len(peer_point_der) == 34 and peer_point_der[:2] == _EC_POINT_PREFIX
+        else peer_point_der
+    )
+    return DeriveMixin.derive_key(
+        prv,
+        KeyType.GENERIC_SECRET,
+        32 * 8,
+        mechanism_param=(KDF.NULL, None, raw_peer),
+        mechanism=Mechanism.ECDH1_DERIVE,
+        store=False,
+        template=template,
+    )
 
 
 class PKCS11Backend:
@@ -216,11 +314,20 @@ class PKCS11Backend:
         """
         Open a read-write PKCS#11 session and authenticate with the user PIN.
 
-        The PIN is requested **once** via one of the following, in priority order:
+        If the token advertises a *protected authentication path* (for example a
+        smartcard reader with its own PIN pad), the token's module collects the
+        PIN out-of-band and this method never asks for one.
+
+        Otherwise the PIN is requested **once** via one of the following, in
+        priority order:
 
         1. The *pin* argument.
         2. The callable *pin_callback()* (called without arguments, must return str).
         3. An interactive :func:`getpass.getpass` prompt.
+
+        The PIN is never written to a configuration file. When obtained
+        interactively it is held only in memory for the lifetime of the session
+        so that a removed-and-reinserted token can be reopened transparently.
 
         :param pin: PIN as a plain string, or *None*.
         :param pin_callback: Zero-argument callable that returns the PIN string.
@@ -236,11 +343,18 @@ class PKCS11Backend:
                 token = self._get_token_for_session(token_selection_callback=token_selection_callback)
                 fingerprint = self._token_fingerprint(token)
                 self._bind_or_validate_token_binding(fingerprint, force_rebind=force_rebind)
-                effective_pin = self._resolve_pin(pin, pin_callback, prompt)
-                self._pin = effective_pin
-                self._pin_callback = pin_callback
                 self._prompt = prompt
-                self._session = token.open(rw=True, user_pin=effective_pin)
+                if self._token_uses_protected_auth(token):
+                    # The token collects the PIN itself (PIN pad / protected
+                    # authentication path); never prompt for it or keep it here.
+                    self._pin = None
+                    self._pin_callback = None
+                    self._session = token.open(rw=True, user_pin=pkcs11.PROTECTED_AUTH)
+                else:
+                    effective_pin = self._resolve_pin(pin, pin_callback, prompt)
+                    self._pin = effective_pin
+                    self._pin_callback = pin_callback
+                    self._session = token.open(rw=True, user_pin=effective_pin)
                 self._state = SessionLifecycle.ACTIVE_SESSION
             except pkcs11.exceptions.PinIncorrect as exc:
                 raise PKCS11LoginError("Incorrect PIN") from exc
@@ -346,17 +460,7 @@ class PKCS11Backend:
                     key_label=key_label,
                     key_id=key_id,
                 )
-                derived = prv.derive_key(
-                    KeyType.GENERIC_SECRET,
-                    32 * 8,
-                    mechanism_param=(KDF.NULL, None, peer_public_point),
-                    mechanism=Mechanism.ECDH1_DERIVE,
-                    store=False,
-                    template={
-                        Attribute.SENSITIVE: False,
-                        Attribute.EXTRACTABLE: True,
-                    },
-                )
+                derived = _derive_shared_secret(prv, peer_public_point)
                 return bytes(derived[Attribute.VALUE])
             try:
                 return self._execute_with_recovery(_do_derive)
@@ -745,6 +849,19 @@ class PKCS11Backend:
             raise PKCS11BackendError(
                 f"Multiple keys named '{identifier}' found; use a unique label or key_id"
             ) from exc
+
+    @staticmethod
+    def _token_uses_protected_auth(token) -> bool:
+        """Return True if the token has its own PIN entry (protected auth path).
+
+        Such tokens (e.g. readers with a PIN pad) collect the user PIN
+        out-of-band, so the application must log in with
+        :data:`pkcs11.PROTECTED_AUTH` instead of supplying a PIN string.
+        """
+        try:
+            return bool(token.flags & TokenFlag.PROTECTED_AUTHENTICATION_PATH)
+        except Exception:
+            return False
 
     @staticmethod
     def _resolve_pin(

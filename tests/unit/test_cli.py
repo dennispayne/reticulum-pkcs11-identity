@@ -114,11 +114,31 @@ enabled = false
                 # No apps should be shown
                 assert len(rows) == 0
 
+    def test_app_slot_view_hidden_when_multi_identity_disabled(self):
+        """With multi-identity off, the per-app slot view is hidden."""
+        with patch("reticulum_pkcs11_identity.cli.load_hardware_identity_config") as mock_config:
+            mock_config.return_value = {
+                "enabled": True,
+                "experimental_features": False,
+                "multi_identity": False,
+                "provider": None,
+                "token_label": None,
+                "exclude_apps": [],
+                "detected_providers": {},
+            }
+            reporter = StatusReporter()
+            # No mapper is built, so the Apps and Slot-Usage sections are empty.
+            assert reporter.mapper is None
+            assert reporter.get_apps_section() == []
+            assert reporter.get_tokens_section() == []
+
     def test_identity_modes(self):
         """Test identity mode determination."""
         with patch("reticulum_pkcs11_identity.cli.load_hardware_identity_config") as mock_config:
             mock_config.return_value = {
                 "enabled": False,
+                "experimental_features": True,
+                "multi_identity": True,
                 "provider": None,
                 "token_label": None,
                 "exclude_apps": ["excluded_app"],
@@ -149,6 +169,8 @@ enabled = false
         with patch("reticulum_pkcs11_identity.cli.load_hardware_identity_config") as mock_config:
             mock_config.return_value = {
                 "enabled": False,
+                "experimental_features": True,
+                "multi_identity": True,
                 "provider": None,
                 "token_label": None,
                 "exclude_apps": ["excluded_app"],
@@ -179,6 +201,8 @@ enabled = false
         with patch("reticulum_pkcs11_identity.cli.load_hardware_identity_config") as mock_config:
             mock_config.return_value = {
                 "enabled": False,
+                "experimental_features": True,
+                "multi_identity": True,
                 "provider": None,
                 "token_label": None,
                 "exclude_apps": [],

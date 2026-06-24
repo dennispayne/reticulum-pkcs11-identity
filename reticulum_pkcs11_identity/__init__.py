@@ -28,7 +28,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-"""PKCS#11 support for explicit LXMF user identity provisioning."""
+"""PKCS#11 hardware-backed identities for Reticulum."""
 
 from .backend import PKCS11Backend, SessionLifecycle
 from .config import load_hardware_identity_config
@@ -49,22 +49,32 @@ from .exceptions import (
 )
 from .identity import (
     make_hardware_identity_class,
-    make_lxmf_identity_class,
-    make_app_hardware_identity_class,
-    create_app_hardware_identity,
-    get_app_identity_keys,
 )
-from .lxmf import (
-    LXMFHardwareIdentityConfig,
-    LXMFHardwareIdentityHandle,
-    create_lxmf_hardware_identity,
-    load_lxmf_hardware_identity_config,
+# The multi-identity API (per-app factories + slot mapper + transparent
+# injection) is experimental and gated by config; it lives under
+# ``reticulum_pkcs11_identity.experimental`` to keep the production surface lean.
+from . import experimental
+from .hardware_identity import (
+    HardwareIdentityConfig,
+    HardwareIdentityHandle,
+    create_hardware_identity,
+    load_hardware_identity_binding,
 )
 from .rns_integration import (
     enable_hardware_identity_injection,
     is_identity_hardware_backed,
     get_identity_app_name,
     get_identity_slot,
+)
+from .session_bootstrap import (
+    BootstrapOutcome,
+    BootstrapResult,
+    TokenClassification,
+    TokenStatus,
+    bootstrap_session,
+    classify_token,
+    provision_identity_via_ykman,
+    run_interactive_bootstrap,
 )
 
 __all__ = [
@@ -77,15 +87,12 @@ __all__ = [
     "PKCS11LoginError",
     "PKCS11SessionError",
     "load_hardware_identity_config",
-    "make_lxmf_identity_class",
     "make_hardware_identity_class",
-    "make_app_hardware_identity_class",
-    "create_app_hardware_identity",
-    "get_app_identity_keys",
-    "LXMFHardwareIdentityConfig",
-    "LXMFHardwareIdentityHandle",
-    "load_lxmf_hardware_identity_config",
-    "create_lxmf_hardware_identity",
+    "experimental",
+    "HardwareIdentityConfig",
+    "HardwareIdentityHandle",
+    "load_hardware_identity_binding",
+    "create_hardware_identity",
     "discover_module_paths",
     "enumerate_token_inventory",
     "format_token_inventory",
@@ -95,4 +102,12 @@ __all__ = [
     "is_identity_hardware_backed",
     "get_identity_app_name",
     "get_identity_slot",
+    "classify_token",
+    "bootstrap_session",
+    "run_interactive_bootstrap",
+    "provision_identity_via_ykman",
+    "TokenStatus",
+    "TokenClassification",
+    "BootstrapOutcome",
+    "BootstrapResult",
 ]

@@ -204,6 +204,8 @@ class TestAutoInitialization:
             with patch("reticulum_pkcs11_identity.rns_integration._detect_app_name") as mock_detect_app:
                 mock_load_config.return_value = {
                     "enabled": True,
+                    "experimental_features": True,
+                    "multi_identity": True,
                     "provider": None,
                     "token_label": None,
                     "exclude_apps": ["myapp"],
@@ -343,6 +345,8 @@ class TestAutoInitializeProvider:
              patch("reticulum_pkcs11_identity.backend.PKCS11Backend") as BackendCls:
             mock_cfg.return_value = {
                 "enabled": True,
+                "experimental_features": True,
+                "multi_identity": True,
                 "provider": "/usr/lib/softhsm.so",
                 "token_label": "RNS-Test-Token",
                 "exclude_apps": [],
@@ -359,6 +363,8 @@ class TestAutoInitializeProvider:
              patch("reticulum_pkcs11_identity.backend.PKCS11Backend") as BackendCls:
             mock_cfg.return_value = {
                 "enabled": True,
+                "experimental_features": True,
+                "multi_identity": True,
                 "provider": None,
                 "token_label": None,
                 "exclude_apps": [],

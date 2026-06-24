@@ -20,7 +20,7 @@ Hardware identity support would be integrated as an optional Identity provider s
 
 The mainline integration requires only three small additions to core Reticulum:
 
-1. **Configuration section**: Add `[hardware_identity]` block to the RNS config schema supporting `enabled`, `pin`, and `provider_path` settings
+1. **Configuration section**: Add `[hardware_identity]` block to the RNS config schema supporting `enabled` and `provider_path` settings (never a PIN — it is collected at session start)
 2. **Provider detection hook**: Add optional provider detection in `Identity.from_file()` that checks if hardware identity is available before creating software identity
 3. **Token monitor service**: Optional background service for PIN cache management and token monitoring
 
@@ -42,7 +42,6 @@ The Reticulum config file would support optional hardware identity configuration
 ```ini
 [hardware_identity]
 enabled = yes
-pin = 123456
 provider_path = /usr/lib/libykcs11.so
 auto_init_slots = 9a, 9c, 9d, 9e
 ```
@@ -52,7 +51,7 @@ auto_init_slots = 9a, 9c, 9d, 9e
 During Identity creation, Reticulum would check for available hardware providers in this order:
 1. Check if hardware identity is enabled in config
 2. Check for connected PKCS#11 tokens
-3. Attempt provider initialization with configured PIN and path
+3. Attempt provider initialization with the configured path, collecting the PIN at session start (interactive prompt, or the token's own PIN pad)
 4. Fall back to software identity if hardware unavailable
 
 ---
