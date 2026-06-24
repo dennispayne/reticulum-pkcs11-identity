@@ -12,10 +12,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.1.7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.1.0
         with:
           python-version: "3.12"
 
@@ -25,5 +25,12 @@ jobs:
       - name: Install Python dependencies
         run: pip install -e ".[test]"
 
-      - name: Run tests
-        run: python3 -m pytest tests/ -v
+      - name: Run tests with coverage
+        run: python3 -m pytest tests/ -v --cov=reticulum_pkcs11_identity --cov-report=html --cov-report=term-missing
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: htmlcov/
