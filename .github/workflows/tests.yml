@@ -67,6 +67,10 @@ jobs:
           name: coverage-report
           path: htmlcov/
 
+      - name: Remove coverage ignore file for Pages publish
+        if: always()
+        run: rm -f htmlcov/.gitignore
+
       - name: Deploy coverage to GitHub Pages
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: peaceiris/actions-gh-pages@v4.1.0
