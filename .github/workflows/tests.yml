@@ -8,7 +8,7 @@ jobs:
   pytest:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
 
     steps:
       - name: Checkout
@@ -26,13 +26,48 @@ jobs:
         run: pip install -e ".[test]"
 
       - name: Run tests with coverage
-        run: python3 -m pytest tests/ -v --cov=reticulum_pkcs11_identity --cov-report=xml --cov-report=html --cov-report=term-missing
+        run: python3 -m pytest tests/ -v --cov=reticulum_pkcs11_identity --cov-report=html --cov-report=term-missing --cov-report=json
 
-      - name: Upload coverage to Codecov
+      - name: Display coverage summary
         if: always()
-        uses: codecov/codecov-action@v7
+        run: |
+          python3 << 'EOF'
+          import json
+          import os
+          
+          # Read coverage.json
+          with open('coverage.json') as f:
+              coverage = json.load(f)
+          
+          # Extract total coverage percentage
+          total_coverage = coverage['totals']['percent_covered']
+          
+          # Create summary with links
+          summary = f"""## Coverage Report
+          
+          **Overall Coverage:** {total_coverage:.1f}%
+          
+          📊 [View detailed HTML report](https://dennispayne.github.io/reticulum-pkcs11-identity/coverage/index.html) (updated on main branch)
+          
+          💾 [Download HTML report from Artifacts](#artifacts)
+          """
+          
+          # Write to GitHub step summary
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
+              f.write(summary)
+          EOF
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          files: ./coverage.xml
-          flags: unittests
-          name: codecov-umbrella
-          fail_ci_if_error: false
+          name: coverage-report
+          path: htmlcov/
+
+      - name: Deploy coverage to GitHub Pages
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./htmlcov
+          destination_dir: coverage
