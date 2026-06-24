@@ -1,4 +1,4 @@
-name: tests
+name: Tests and Coverage
 
 on:
   push:
@@ -6,6 +6,7 @@ on:
 
 jobs:
   pytest:
+    name: Run test suite (pytest + coverage)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -80,6 +81,7 @@ jobs:
           path: pages
 
   deploy-pages:
+    name: Publish coverage to GitHub Pages
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: pytest
     runs-on: ubuntu-latest
