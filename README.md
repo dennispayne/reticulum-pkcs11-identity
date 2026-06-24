@@ -4,7 +4,7 @@ Protect your Reticulum app identities with a hardware token—no coding required
 
 ## What is this?
 
-If you use Reticulum apps (like Meshchat, Sideband, or others), your app identities are normally stored as files on your computer. This module lets you move those identities onto a hardware token like a YubiKey, smartcard, or Nitrokey instead.
+If you use Reticulum apps (like Meshchat, Sideband, or others), your app identities are normally stored as files on your computer. This module lets you move those identities onto a hardware token instead. Any PKCS#11-compatible hardware token should work; development and testing were done with a YubiKey.
 
 **The key benefit:** Your cryptographic keys never leave the hardware. Your computer can use those keys to sign messages and encrypt data, but the actual key material stays safe on the token. Even if your computer is compromised, your keys are protected.
 
@@ -59,7 +59,7 @@ When your app needs to sign a message or create an identity, this module interce
 
 ### Step 2: Configure
 
-1. Plug in your hardware token (YubiKey, smartcard, etc.)
+1. Plug in your hardware token
 2. Locate your Reticulum config file:
    - **Windows:** `C:\Users\YourUsername\.reticulum\config`
    - **macOS/Linux:** `~/.reticulum/config`
@@ -133,14 +133,9 @@ If you plug in a different hardware token on the same machine:
 
 ## Under the hood (optional reading)
 
-This module uses PKCS#11, the universal standard for hardware cryptography. It's the same protocol used by:
-- YubiKey
-- Nitrokey
-- Most smartcards
-- Hardware security modules (HSMs)
-- Software simulators like SoftHSM
+This module uses PKCS#11, the universal standard for hardware cryptography. Because PKCS#11 is vendor-neutral, the same installation works with any compatible hardware token (and with software simulators like SoftHSM for testing). It's not tied to a specific vendor or device.
 
-This means one installation works with any compatible hardware. Not tied to a specific vendor or device.
+Development and testing were done with a YubiKey.
 
 **How seamless is it?** The module is installed as a Python package, but it works by being imported before your app runs. We recommend wrapping your app launch in a simple script or shell command that imports the module first. See "Integration" below.
 

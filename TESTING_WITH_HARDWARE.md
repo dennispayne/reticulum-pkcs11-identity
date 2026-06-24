@@ -63,7 +63,7 @@ PKCS11_TEST_PIN=123456 pytest tests/
 
 ## Real-World Examples
 
-### Windows: Test against YubiKey 5C Nano
+### Windows: Test against a YubiKey
 ```powershell
 $env:PKCS11_TEST_TOKEN = "yubikey"
 $env:PKCS11_TEST_PIN = "123456"
@@ -297,7 +297,7 @@ def test_my_feature(pkcs11_backend):
 ```
 $ PKCS11_TEST_TOKEN=yubikey PKCS11_TEST_PIN=123456 pytest tests/ -v
 ...
-================ 305 passed, 96 skipped, 35 warnings in 8.23s =================
+================ passed, skipped (timing varies) =================
 ```
 
-The hardware tests run slower due to YubiKey communication, but verify the system works with real tokens.
+The hardware tests run slower due to token communication, but verify the system works with real tokens.

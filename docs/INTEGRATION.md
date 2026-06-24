@@ -6,7 +6,7 @@ This document outlines how the reticulum-pkcs11-identity solution could be integ
 
 ## 1. Current Approach (Standalone)
 
-The reticulum-pkcs11-identity package operates as a completely standalone solution with zero impact on Reticulum core. Users install the package via pip, set environment variables for PIN and PKCS#11 provider configuration, and import the module at application startup. The module auto-patches Reticulum's Identity class on import through Python monkey-patching, enabling transparent hardware identity injection without modifying any Reticulum code. This clean separation has proven successful through extensive testing (186 passing tests) and real-world deployments across multiple platforms. Applications remain completely unaware of hardware injection, and existing Reticulum functionality continues unchanged.
+The reticulum-pkcs11-identity package operates as a completely standalone solution with zero impact on Reticulum core. Users install the package via pip, set environment variables for PIN and PKCS#11 provider configuration, and import the module at application startup. The module auto-patches Reticulum's Identity class on import through Python monkey-patching, enabling transparent hardware identity injection without modifying any Reticulum code. This clean separation has proven successful through testing against SoftHSM2 (software token) and a hardware token (development and testing were done with a YubiKey). Applications remain completely unaware of hardware injection, and existing Reticulum functionality continues unchanged.
 
 ---
 
@@ -43,7 +43,6 @@ The Reticulum config file would support optional hardware identity configuration
 [hardware_identity]
 enabled = yes
 provider_path = /usr/lib/libykcs11.so
-auto_init_slots = 9a, 9c, 9d, 9e
 ```
 
 ### Provider Detection
@@ -75,7 +74,7 @@ During Identity creation, Reticulum would check for available hardware providers
 ### Phase 3: Testing and CI/CD
 
 1. **Integrate unit tests** — Add hardware identity tests to RNS test suite
-2. **CI/CD with YubiKey support** — Add GitHub Actions workflows with real YubiKey devices
+2. **CI/CD with hardware support** — Add GitHub Actions workflows that can run against a real hardware token (testing was done with a YubiKey)
 3. **Fallback testing** — Use SoftHSM2 for CI/CD when hardware unavailable
 4. **Regression testing** — Ensure no impact on existing software-only identity flows
 
@@ -111,14 +110,13 @@ Hardware identity support has no hard dependencies on PKCS#11 libraries. The cor
 
 ### Integration Tests
 
-- Real YubiKey testing for all supported device variants (5C, 5C Nano, 5Ci, 5NFC)
-- Multi-app identity isolation verification ensuring each slot maps correctly
+- Real hardware token testing (development and testing were done with a YubiKey)
 - PIN caching behavior validation across sequential operations
 - Hardware failure and token disconnect recovery testing
 
 ### CI/CD Infrastructure
 
-- GitHub Actions workflow with YubiKey 5 devices for nightly regression testing
+- GitHub Actions workflow that can run against a hardware token for regression testing
 - SoftHSM2 fallback for pull request validation when hardware unavailable
 - Cross-platform testing: Linux (various distros), macOS (Intel and ARM), Windows
 - Performance benchmarks comparing hardware vs. software identity creation
@@ -126,7 +124,7 @@ Hardware identity support has no hard dependencies on PKCS#11 libraries. The cor
 ### Community Hardware Testing
 
 - Document procedure for contributors to test with their own hardware
-- Community test reporting for various YubiKey firmware versions and configurations
+- Community test reporting for various token firmware versions and configurations
 - Compatibility matrix documentation for supported hardware combinations
 
 ---

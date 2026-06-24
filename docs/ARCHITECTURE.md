@@ -1,8 +1,10 @@
-# Reticulum PKCS#11 Identity: v2.1 Architecture & Design
+# Reticulum PKCS#11 Identity: Architecture & Design
 
 ## Overview
 
-The Reticulum PKCS#11 Identity project solves the critical problem of enabling **hardware-backed cryptographic identities** for Reticulum messaging applications without requiring any modifications to existing application code. Users of Reticulum-based messaging apps (Sideband, Meshchat, RNPhone, etc.) can achieve maximum security by storing private keys on hardware security modules like YubiKey 5 devices, while applications remain completely unaware of this security posture change.
+The Reticulum PKCS#11 Identity project solves the critical problem of enabling **hardware-backed cryptographic identities** for Reticulum messaging applications without requiring any modifications to existing application code. Users of Reticulum-based messaging apps (Sideband, Meshchat, RNPhone, etc.) can achieve maximum security by storing private keys on a PKCS#11 hardware token, while applications remain completely unaware of this security posture change. Any PKCS#11-compatible token should work; development and testing were done with a YubiKey.
+
+The production model is a **single hardware identity** that is shared across apps via Reticulum's own aspect mechanism. The opt-in multi-identity / per-app-slot machinery (which maps individual apps to separate PIV slots) is **experimental** and lives under `reticulum_pkcs11_identity.experimental`; it is disabled unless explicitly enabled in config.
 
 Seamless injection is essential because Reticulum has a large ecosystem of community applications that cannot be easily modified or recompiled. Rather than forking each application or maintaining separate distributions, we achieve zero-friction integration by intercepting identity creation at the Reticulum framework level through Python monkey-patching. When an application calls `RNS.Identity.from_file()`, our interceptor transparently substitutes hardware-backed keys if available, falling back gracefully to software identities if hardware is unavailable. This maintains 100% backward compatibility while enabling users to opt-in to hardware security through simple configuration without touching any application code.
 
@@ -35,14 +37,17 @@ Hardware identity injection is strictly opt-in through the `[hardware_identity]`
 enabled = true
 provider = libykcs11
 token_label = YubiKey PIV
-exclude_apps = admin,test
 ```
 
 When this section is absent or `enabled = false`, the normal Reticulum identity creation continues unchanged. When enabled:
 - The PKCS#11 provider (libykcs11, opensc-pkcs11, softhsm2, or explicit path) is loaded
 - Available tokens are scanned for the specified label
-- The app-to-slot mapping is loaded from persistent storage
+- The single hardware identity is bound and shared across apps via RNS aspects
 - The identity interception patch is installed at module import time
+
+> **Experimental:** The opt-in multi-identity feature adds `experimental_features = true`
+> and `multi_identity = true` (and a per-app `exclude_apps` list) to this section
+> to allocate a separate PIV slot per app. It is off by default.
 
 This configuration-driven approach ensures zero disruption to existing deployments—users simply omit the section if they don't need hardware identities.
 
@@ -80,7 +85,7 @@ class TokenMonitor:
         """Captures provider, serial numbers, hardware versions"""
 ```
 
-When a user physically swaps tokens (e.g., User A removes their YubiKey and User B inserts theirs), the monitor detects this through serial number or provider changes. Detection triggers:
+When a user physically swaps tokens (e.g., User A removes their token and User B inserts theirs), the monitor detects this through serial number or provider changes. Detection triggers:
 1. Immediate session invalidation (cached PKCS#11 sessions cleared)
 2. Clear error message to the user: "Hardware token changed. Please re-authenticate."
 3. Force re-authentication on next identity operation
@@ -115,7 +120,7 @@ Benefits:
 
 ### 1. Filepath-Based Mapping (vs. App Name Mapping)
 
-**Decision**: Use the identity file path as the canonical identifier for app-to-slot mapping.
+**Decision**: Use the identity file path as the canonical identifier when intercepting identity creation (and, in the experimental multi-identity feature, as the key for app-to-slot mapping).
 
 **Rationale**:
 - **RNS always loads from filepath**: The Reticulum framework accepts a filepath and loads identity data from disk. This is the fundamental contract.
@@ -158,7 +163,7 @@ Benefits:
 **Decision**: Actively detect token changes and invalidate sessions when detected.
 
 **Rationale**:
-- **Security**: If User A removes their YubiKey and User B inserts a different one, we must prevent cached sessions from authenticating as User A.
+- **Security**: If User A removes their token and User B inserts a different one, we must prevent cached sessions from authenticating as User A.
 - **Clear error**: Rather than silently using the wrong identity, we detect and raise: "Hardware token changed. Re-authenticate to continue."
 - **User agency**: User explicitly acknowledges the change by re-entering PIN.
 - **Prevents data corruption**: Particularly in messaging apps where signatures establish authority. Token swaps must fail loudly.
@@ -187,7 +192,7 @@ The current implementation is a self-contained plugin module (`reticulum_pkcs11_
        pass  # Hardware identity module not installed or not enabled
    ```
 3. **Configuration**: Reticulum already has a configuration system. Add `[hardware_identity]` section to default config template.
-4. **Documentation**: Add hardware identity section to Reticulum docs with YubiKey setup guide.
+4. **Documentation**: Add a hardware identity section to Reticulum docs with a hardware token setup guide.
 
 ### Minimal Changes Needed to Core
 
@@ -209,7 +214,7 @@ RNS/
     discovery.py          # PKCS#11 provider detection
     pkcs11_provider.py    # PKCS#11 wrapper
     token_monitor.py      # Token change detection
-    app_identity.py       # App-to-slot mapping
+    experimental/         # Opt-in multi-identity (app-to-slot mapping)
     backend.py            # Core backend
     backend_piv.py        # PIV-specific backend
     exceptions.py         # Custom exceptions
@@ -220,10 +225,13 @@ RNS/
 **Public API** (applications might explicitly use):
 ```python
 from reticulum_pkcs11_identity import (
-    initialize_hardware_identity,        # Manual initialization
-    AppIdentityMapper,                    # Query app-to-slot mappings
-    PKCS11ConfigError,                    # Configuration errors
+    create_hardware_identity,            # Build the single hardware identity
+    load_hardware_identity_binding,      # Load a persisted identity binding
+    PKCS11ConfigError,                   # Configuration errors
 )
+
+# Experimental multi-identity (opt-in, gated by config):
+from reticulum_pkcs11_identity.experimental import AppIdentityMapper
 ```
 
 These remain stable across versions. Internal implementation details (`backend`, `discovery`, `token_monitor`) can evolve.
@@ -231,12 +239,12 @@ These remain stable across versions. Internal implementation details (`backend`,
 ### Testing Strategy for Mainline
 
 1. **Unit tests**: Test each module independently (config parsing, provider detection, token monitoring)
-2. **Integration tests**: Test with real YubiKey (5C, 5Ci, 5NFC tested; 5 Nano supported)
+2. **Integration tests**: Test with a real hardware token (development and testing were done with a YubiKey)
 3. **Fallback tests**: Disable hardware provider and verify graceful fallback to software identities
 4. **Mainline compatibility**: Existing apps importing Reticulum must work unchanged (our patch is internal)
-5. **CI/CD**: GitHub Actions workflow with optional YubiKey detection; skip hardware tests if device unavailable
+5. **CI/CD**: GitHub Actions workflow with optional hardware detection; skip hardware tests if device unavailable
 
-**Current test coverage**: 186 passing tests across all modules, real YubiKey validation included.
+**Test coverage**: The default test suite runs against SoftHSM2 (software token) on CI; real-hardware validation is opt-in via `PKCS11_TEST_TOKEN=yubikey` (see [TESTING_WITH_HARDWARE.md](../TESTING_WITH_HARDWARE.md)).
 
 ## Security Considerations
 
@@ -282,7 +290,7 @@ Our interception layer cannot transparently inject hardware into these cases sin
 
 ### Multi-Device Sync (Out of Scope)
 
-This implementation assumes a single user with a single YubiKey. Scenarios like:
+This implementation assumes a single user with a single hardware token. Scenarios like:
 - User A's key is in Device 1; User B's key is in Device 2; they sync messages
 - Cross-device identity revocation or rotation
 
