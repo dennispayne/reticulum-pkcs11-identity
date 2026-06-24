@@ -1,14 +1,9 @@
 {
-  // Point the Python extension at the workspace virtual environment so it
-  // overrides any invalid user/global `python.defaultInterpreterPath` (for
-  // example a synced Windows path that does not exist on this machine).
-  //
-  // The POSIX layout (.venv/bin/python) resolves on Linux/WSL/macOS. On Windows
-  // the interpreter lives at .venv\Scripts\python.exe; the extension auto-
-  // detects the workspace .venv there, so just select it once if prompted (the
-  // choice is stored per-machine). VS Code settings have no per-OS variant for
-  // this key, so a single POSIX path is committed.
-  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+  // Point the Python extension at the workspace virtual environment root.
+  // Using the venv directory (instead of a platform-specific executable path)
+  // allows VS Code and related tooling (including uv package refresh) to
+  // resolve the correct interpreter on Windows, Linux, and macOS.
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv",
   "python.testing.pytestEnabled": true,
   "python.testing.unittestEnabled": false,
   "python.testing.autoTestDiscoverOnSaveEnabled": true,

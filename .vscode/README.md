@@ -30,7 +30,7 @@ This directory contains VS Code configuration files for local development, debug
 ### `settings.json`
 Python interpreter, pytest configuration, type checking, and formatting settings.
 
-- **Python Interpreter**: Points to `.venv\Scripts\python.exe` (or `.venv/bin/python` on Linux/macOS)
+- **Python Interpreter**: Points to `.venv` so VS Code resolves the correct interpreter per OS
 - **Pytest**: Enabled with verbose output by default
 - **Type Checking**: Uses Pylance for fast, accurate language features
 
@@ -153,8 +153,8 @@ cp .vscode/.env.example .vscode/.env
 # Run all tests with SoftHSM2 (what CI uses)
 ctrl+shift+p → "Run Task" → "Tests: Run all (SoftHSM2, default)"
 
-# Or from terminal
-.venv\Scripts\python.exe -m pytest tests/ -q
+# Or from terminal (inside the activated venv)
+python -m pytest tests/ -q
 ```
 
 **Later, optional YubiKey validation:**
@@ -162,21 +162,21 @@ ctrl+shift+p → "Run Task" → "Tests: Run all (SoftHSM2, default)"
 # Run all tests with YubiKey
 ctrl+shift+p → "Run Task" → "Tests: Run with YubiKey hardware"
 
-# Or set env var and run from terminal
+# Or set env vars and run from terminal
 $env:PKCS11_TEST_TOKEN = "yubikey"
 $env:PKCS11_TEST_PIN = "123456"
-.venv\Scripts\python.exe -m pytest tests/ -q
+python -m pytest tests/ -q
 ```
 
 ## Troubleshooting
 
 ### "Python interpreter not found"
 - Ensure `.venv` exists: `uv venv` or `python -m venv .venv`
-- Or open a terminal and manually activate: `.\.venv\Scripts\activate`
+- Or open a terminal and manually activate: `.\.venv\Scripts\activate` (Windows) or `source .venv/bin/activate` (Linux/macOS)
 - Reload VS Code window: `Ctrl+Shift+P` → "Developer: Reload Window"
 
 ### "Pytest not found"
-- Ensure test dependencies installed: `.\.venv\Scripts\python.exe -m pip install -e ".[test]"`
+- Ensure test dependencies installed: `python -m pip install -e ".[test]"` (inside the activated venv)
 - Or run task: Command Palette → "Python: Install editable test deps"
 
 ### "YubiKey tests are skipping"
