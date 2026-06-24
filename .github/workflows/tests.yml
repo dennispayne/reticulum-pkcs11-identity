@@ -36,6 +36,9 @@ jobs:
           import os
           
           # Read coverage.json
+          if not os.path.exists('coverage.json'):
+              print("coverage.json not found; skipping summary")
+              raise SystemExit(0)
           with open('coverage.json') as f:
               coverage = json.load(f)
           

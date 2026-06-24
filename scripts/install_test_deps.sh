@@ -29,7 +29,7 @@ if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
 fi
 
 echo "Installing SoftHSM2 via apt-get..."
-"${APT_PREFIX[@]}" apt-get update
+"${APT_PREFIX[@]}" apt-get update || true
 "${APT_PREFIX[@]}" apt-get install -y softhsm2
 
 if ! command -v softhsm2-util >/dev/null 2>&1; then
