@@ -73,6 +73,19 @@ jobs:
         run: |
           mkdir -p pages/coverage
           cp -a htmlcov/. pages/coverage/
+          cat > pages/index.html << 'EOF'
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta http-equiv="refresh" content="0; url=coverage/index.html">
+            <title>Coverage Report</title>
+          </head>
+          <body>
+            <p>Redirecting to <a href="coverage/index.html">coverage report</a>...</p>
+          </body>
+          </html>
+          EOF
 
       - name: Upload GitHub Pages artifact
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -90,7 +103,7 @@ jobs:
       id-token: write
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ format('{0}coverage/index.html', steps.deployment.outputs.page_url) }}
     steps:
       - name: Configure Pages
         uses: actions/configure-pages@v6
